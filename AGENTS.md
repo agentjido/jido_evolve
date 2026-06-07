@@ -26,3 +26,7 @@
 
 ## Dependencies
 - Standard Elixir ~> 1.18 with OTP application structure
+
+## Release Hygiene
+
+- Do not modify `CHANGELOG.md`; release notes are generated from Git history during release, so keep changes focused on proper Conventional Commits.
