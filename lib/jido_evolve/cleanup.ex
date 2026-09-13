@@ -1,6 +1,6 @@
 defmodule Jido.Evolve.Cleanup do
   @moduledoc """
-  Register cleanup for external work owned by an evaluation or reflection callback.
+  Register cleanup for external work owned by an evaluation callback.
 
   A separate process stores each function before `register/1` returns. It runs
   the functions after the callback stops, including when the worker is killed.
@@ -17,7 +17,7 @@ defmodule Jido.Evolve.Cleanup do
   gap with an external owner or a service deadline. Unregistered work, a stopped
   VM, and external services that ignore cancellation remain caller responsibilities.
 
-  Registration is available only in the evaluation or reflection worker itself.
+  Registration is available only in the evaluation worker itself.
   It is not inherited by spawned processes or supported in variation callbacks.
   A callback's `after` block is not a substitute for registered cleanup.
   """
@@ -29,7 +29,7 @@ defmodule Jido.Evolve.Cleanup do
   Register cleanup with the current callback's owner.
 
   Capture a resource ID in the function. It also receives the stop reason.
-  For example, inside a fitness or reflection callback:
+  For example, inside a fitness callback:
 
       run_id = MyClient.new_run_id()
       :ok = Jido.Evolve.Cleanup.register(fn _reason -> MyClient.cancel(run_id) end)

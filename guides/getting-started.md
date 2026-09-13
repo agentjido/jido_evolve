@@ -171,8 +171,7 @@ sandbox for generated code or a way to undo external side effects.
 
 A timeout kills the callback worker. Its `after` block cannot run. If the callback
 starts detached work, such as a Harness run, register cleanup with
-`Jido.Evolve.Cleanup.register/1`. The same API works in GEPA evaluation and
-reflection callbacks.
+`Jido.Evolve.Cleanup.register/1`.
 
 ```elixir
 def evaluate(candidate, context) do
@@ -206,9 +205,8 @@ deadline. The time spent in cleanup does not change a callback's finish timestam
 An evaluation continues to occupy its concurrency slot until cleanup finishes.
 
 A cleanup failure makes that evaluation fail with
-`{:cleanup_failed, original_outcome, failures}` in its error field. Reflection
-returns the same error in the partial search result. The error retains the
-original outcome and each cleanup failure. A timeout is recorded as `:timeout`.
+`{:cleanup_failed, original_outcome, failures}` in its error field. The error
+retains the original outcome and each cleanup failure. A timeout is recorded as `:timeout`.
 Do not treat a cleanup timeout as proof that external work stopped.
 
 Register from the callback worker itself. Spawned processes do not inherit its

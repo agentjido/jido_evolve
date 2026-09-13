@@ -17,7 +17,7 @@ defmodule Jido.Evolve.Callback do
 
   @doc false
   @spec async(pid(), (-> term()), integer() | nil, pos_integer(), :timeout | :deadline) :: t()
-  def async(supervisor, fun, expires, cleanup_timeout, timeout_reason \\ :timeout) do
+  def async(supervisor, fun, expires, cleanup_timeout, timeout_reason) do
     {:ok, pid} = GenServer.start(__MODULE__, {self(), cleanup_timeout})
     ref = Process.monitor(pid)
     GenServer.cast(pid, {:start, ref, supervisor, fun, expires, timeout_reason})
@@ -27,19 +27,6 @@ defmodule Jido.Evolve.Callback do
   @doc false
   @spec cancel(t(), Cleanup.reason()) :: :ok
   def cancel(%__MODULE__{pid: pid}, reason), do: GenServer.cast(pid, {:cancel, reason})
-
-  @doc false
-  @spec await(t()) :: {:ok, term()} | {:error, term()}
-  def await(%__MODULE__{pid: pid, ref: ref}) do
-    receive do
-      {^ref, outcome} ->
-        Process.demonitor(ref, [:flush])
-        reply(outcome)
-
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:error, {:exit, reason}}
-    end
-  end
 
   @impl true
   def init({owner, cleanup_timeout}) do
@@ -193,10 +180,6 @@ defmodule Jido.Evolve.Callback do
     send(state.owner, {state.ref, outcome})
     {:stop, :normal, state}
   end
-
-  defp reply({finished, result}) when is_integer(finished), do: {:ok, result}
-  defp reply({:stopped, reason}), do: {:error, reason}
-  defp reply(error), do: {:error, error}
 
   defp cancel_timer(nil), do: :ok
   defp cancel_timer(timer), do: Process.cancel_timer(timer)

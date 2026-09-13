@@ -67,15 +67,10 @@ Applications own domain validity, fixed evaluation cases, acceptance, and promot
 Multi-objective search, native GEPA, model calls, persistent resume, and distributed
 execution are deferred.
 
-An [example GEPA search](guides/gepa-examples.md) now shows a separate reflective
-search schedule over the core evaluator. Run it without API keys, then connect
-task and reflection models through the optional ReqLLM example.
-
 ## Guides and checks
 
 - [Getting started and callback contracts](guides/getting-started.md)
 - [Migration from the previous API](guides/migration.md)
-- [GEPA examples: offline search and real model callbacks](guides/gepa-examples.md)
 - [Contributing](CONTRIBUTING.md)
 
 ```bash
