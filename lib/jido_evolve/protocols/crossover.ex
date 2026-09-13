@@ -25,6 +25,10 @@ defmodule Jido.Evolve.Crossover do
       end
   """
 
+  @doc "Validate strategy options before evaluation starts."
+  @callback validate_opts(keyword()) :: :ok | {:error, term()}
+  @optional_callbacks validate_opts: 1
+
   @doc """
   Performs crossover between two parent entities to produce two offspring.
 

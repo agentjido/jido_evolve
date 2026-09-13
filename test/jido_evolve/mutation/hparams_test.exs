@@ -22,8 +22,7 @@ defmodule Jido.Evolve.Mutation.HParamsTest do
       learning_rate: {:float, {0.001, 0.1}, :linear},
       log_lr: {:float, {1.0e-5, 1.0e-1}, :log},
       batch_size: {:int, {16, 128}},
-      activation: {:enum, [:relu, :tanh, :gelu]},
-      passthrough: :custom_spec
+      activation: {:enum, [:relu, :tanh, :gelu]}
     }
 
     input = %{

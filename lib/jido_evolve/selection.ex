@@ -6,25 +6,29 @@ defmodule Jido.Evolve.Selection do
   should be chosen as parents for the next generation.
   """
 
-  @type entity :: term()
+  @type entity :: {non_neg_integer(), non_neg_integer()}
   @type population :: list(entity())
-  @type scores :: %{entity() => float()}
-  @type count :: pos_integer()
+  @type scores :: %{entity() => number()}
+  @type count :: non_neg_integer()
   @type opts :: keyword()
+
+  @doc "Validate strategy options before evaluation starts."
+  @callback validate_opts(keyword()) :: :ok | {:error, term()}
+  @optional_callbacks validate_opts: 1
 
   @doc """
   Select entities from the population for reproduction.
 
   ## Parameters
 
-  - `population` - The current population
-  - `scores` - Map of entity to fitness score
+  - `population` - IDs of valid evaluated members
+  - `scores` - Map of member ID to utility; higher is always better
   - `count` - Number of entities to select
-  - `opts` - Strategy-specific options
+  - `opts` - Strategy options and `:evaluations`, a map from ID to evaluation record
 
   ## Returns
 
-  A list of selected entities for reproduction.
+  Exactly `count` valid member IDs, with replacement when needed.
 
   ## Examples
 

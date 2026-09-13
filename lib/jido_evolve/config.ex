@@ -7,12 +7,14 @@ defmodule Jido.Evolve.Config do
 
   import Bitwise
 
+  alias Jido.Evolve.Error
+
   @mutation_strategy_schema Zoi.atom() |> Zoi.refine({__MODULE__, :validate_mutation_strategy, []})
   @selection_strategy_schema Zoi.atom() |> Zoi.refine({__MODULE__, :validate_selection_strategy, []})
   @crossover_strategy_schema Zoi.atom() |> Zoi.refine({__MODULE__, :validate_crossover_strategy, []})
 
   @termination_criterion_schema Zoi.union([
-                                  Zoi.tuple({Zoi.literal(:max_generations), Zoi.integer() |> Zoi.min(1)}),
+                                  Zoi.tuple({Zoi.literal(:max_generations), Zoi.integer() |> Zoi.min(0)}),
                                   Zoi.tuple({Zoi.literal(:target_fitness), Zoi.number()}),
                                   Zoi.tuple({Zoi.literal(:no_improvement), Zoi.integer() |> Zoi.min(1)})
                                 ])
@@ -22,7 +24,7 @@ defmodule Jido.Evolve.Config do
             __MODULE__,
             %{
               population_size: Zoi.integer() |> Zoi.min(1) |> Zoi.default(100),
-              generations: Zoi.integer() |> Zoi.min(1) |> Zoi.default(1000),
+              generations: Zoi.integer() |> Zoi.min(0) |> Zoi.default(1000),
               mutation_rate: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.1),
               crossover_rate: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.7),
               elitism_rate: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.05),
@@ -31,11 +33,14 @@ defmodule Jido.Evolve.Config do
               mutation_strategy: @mutation_strategy_schema |> Zoi.default(Jido.Evolve.Mutation.Text),
               crossover_strategy: @crossover_strategy_schema |> Zoi.default(Jido.Evolve.Crossover.String),
               termination_criteria: @termination_criteria_schema |> Zoi.default([]),
-              checkpoint_interval: Zoi.integer() |> Zoi.min(1) |> Zoi.nullish(),
+              objective: Zoi.enum([:maximize, :minimize]) |> Zoi.default(:maximize),
+              max_evaluations: Zoi.integer() |> Zoi.min(1) |> Zoi.nullish(),
+              deadline_ms: Zoi.integer() |> Zoi.min(0) |> Zoi.nullish(),
+              cleanup_timeout: Zoi.integer() |> Zoi.min(1) |> Zoi.default(1000),
+              diversity_enabled: Zoi.boolean() |> Zoi.default(false),
               metrics_enabled: Zoi.boolean() |> Zoi.default(true),
               random_seed: Zoi.integer() |> Zoi.nullish(),
               tournament_size: Zoi.integer() |> Zoi.min(1) |> Zoi.default(2),
-              selection_pressure: Zoi.number() |> Zoi.min(0.0) |> Zoi.default(1.0),
               evaluation_timeout:
                 Zoi.union([
                   Zoi.integer() |> Zoi.min(1),
@@ -70,18 +75,24 @@ defmodule Jido.Evolve.Config do
   def new(opts \\ [])
 
   def new(opts) when is_list(opts) or is_map(opts) do
-    opts_map = normalize_opts(opts)
+    if is_map(opts) or Keyword.keyword?(opts) do
+      opts_map = normalize_opts(opts)
+      unknown = Map.keys(opts_map) -- Map.keys(Map.from_struct(struct(__MODULE__)))
 
-    case Zoi.parse(@schema, opts_map) do
-      {:ok, config} ->
-        {:ok, config}
-
-      {:error, error} ->
-        {:error, error}
+      if unknown == [] do
+        case Zoi.parse(@schema, opts_map) do
+          {:ok, config} -> {:ok, config}
+          {:error, errors} -> {:error, errors}
+        end
+      else
+        {:error, Error.config_error("unknown configuration options", %{keys: unknown})}
+      end
+    else
+      {:error, Error.config_error("config options must be a keyword list or map")}
     end
   end
 
-  def new(_opts), do: {:error, %ArgumentError{message: "config options must be a keyword list or map"}}
+  def new(_opts), do: {:error, Error.config_error("config options must be a keyword list or map")}
 
   @doc """
   Create a new configuration, raising on validation errors.
@@ -95,8 +106,13 @@ defmodule Jido.Evolve.Config do
   @spec new!(keyword() | map()) :: t()
   def new!(opts \\ []) do
     case new(opts) do
-      {:ok, config} -> config
-      {:error, error} -> raise error
+      {:ok, config} ->
+        config
+
+      {:error, error} ->
+        if is_exception(error),
+          do: raise(error),
+          else: raise(Error.config_error("invalid configuration", %{errors: error}))
     end
   end
 
@@ -112,7 +128,7 @@ defmodule Jido.Evolve.Config do
   Initialize random seed if configured.
 
   Uses explicit :exs1024 algorithm with deterministic seed tuple for reproducibility
-  across OTP versions.
+  within the same OTP version.
   """
   @spec init_random_seed(t()) :: :ok
   def init_random_seed(%__MODULE__{random_seed: nil}), do: :ok

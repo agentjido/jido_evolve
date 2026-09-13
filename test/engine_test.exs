@@ -23,7 +23,6 @@ defmodule Jido.Evolve.EngineTest do
       stream = Engine.evolve(initial_pop, config, TestFitness)
 
       assert is_function(stream)
-      assert Enumerable.impl_for(stream) != nil
     end
 
     test "stops at config.generations = 1" do
@@ -35,8 +34,7 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Should yield exactly 1 state (generation 0)
-      assert length(states) == 1
+      assert length(states) == 2
       assert hd(states).generation == 0
     end
 
@@ -49,8 +47,7 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Should yield exactly 2 states (generations 0 and 1)
-      assert length(states) == 2
+      assert length(states) == 3
       assert Enum.at(states, 0).generation == 0
       assert Enum.at(states, 1).generation == 1
     end
@@ -64,8 +61,7 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Should yield exactly 3 states (generations 0, 1, and 2)
-      assert length(states) == 3
+      assert length(states) == 4
       assert Enum.at(states, 0).generation == 0
       assert Enum.at(states, 1).generation == 1
       assert Enum.at(states, 2).generation == 2
@@ -87,10 +83,8 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness, mutation: CustomMutation)
         |> Enum.to_list()
 
-      # Get the last state (generation 1)
       final_state = List.last(states)
 
-      # Check that at least one entity has "_custom" suffix (from CustomMutation)
       has_custom_mutation = Enum.any?(final_state.population, &String.contains?(&1, "_custom"))
       assert has_custom_mutation
     end
@@ -106,12 +100,11 @@ defmodule Jido.Evolve.EngineTest do
 
       initial_pop = ["a", "bb", "ccc", "dddd"]
 
-      [final_state] =
+      [final_state | _] =
         initial_pop
         |> Engine.evolve(config, TestFitness, selection: CustomSelection)
         |> Enum.to_list()
 
-      # Verify selection occurred
       assert length(final_state.population) == 4
     end
 
@@ -130,7 +123,7 @@ defmodule Jido.Evolve.EngineTest do
       config = Config.new!(population_size: 4, generations: 1)
 
       assert_raise Error.InvalidInputError, fn ->
-        Engine.evolve(["a", "bb", "ccc", "dddd"], config, TestFitness, %{context: %{}})
+        apply(Engine, :evolve, [["a", "bb", "ccc", "dddd"], config, TestFitness, %{context: %{}}])
       end
     end
   end
@@ -140,12 +133,11 @@ defmodule Jido.Evolve.EngineTest do
       config = Config.new!(population_size: 4, generations: 1)
       initial_pop = ["a", "bb", "ccc", "dddd"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # TestFitness returns score based on string length
       assert state.scores["a"] == 1.0
       assert state.scores["bb"] == 2.0
       assert state.scores["ccc"] == 3.0
@@ -156,12 +148,11 @@ defmodule Jido.Evolve.EngineTest do
       config = Config.new!(population_size: 4, generations: 1)
       initial_pop = ["a", "bb", "ccc", "dddd"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, MetadataFitness)
         |> Enum.to_list()
 
-      # Metadata format should be handled correctly
       assert state.scores["a"] == 1.0
       assert state.scores["bb"] == 2.0
       assert state.scores["ccc"] == 3.0
@@ -172,84 +163,70 @@ defmodule Jido.Evolve.EngineTest do
       config = Config.new!(population_size: 6, generations: 1)
       initial_pop = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # All entities should be evaluated
       assert map_size(state.scores) == 6
 
-      # Best score should be the longest string
       assert state.best_score == 6.0
       assert state.best_entity == "ffffff"
 
-      # Average should be calculated correctly
       expected_avg = (1.0 + 2.0 + 3.0 + 4.0 + 5.0 + 6.0) / 6.0
       assert_in_delta state.average_score, expected_avg, 0.01
     end
   end
 
   describe "evaluate_population error paths" do
-    test "fitness.evaluate returns {:error, reason} → entity gets score 0.0, no crash" do
+    test "fitness.evaluate returns {:error, reason} → entity has an error record and no score" do
       config = Config.new!(population_size: 4, generations: 1)
       initial_pop = ["a", "bb", "ccc", "dddd"]
 
-      # TestFitness supports :return_error context flag
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, TestFitness, context: %{return_error: true})
         |> Enum.to_list()
 
-      # All entities should get score 0.0 when evaluation returns error
-      assert state.scores["a"] == 0.0
-      assert state.scores["bb"] == 0.0
-      assert state.scores["ccc"] == 0.0
-      assert state.scores["dddd"] == 0.0
+      assert state.scores["a"] == nil
+      assert state.scores["bb"] == nil
+      assert state.scores["ccc"] == nil
+      assert state.scores["dddd"] == nil
 
-      # Best score should be 0.0
-      assert state.best_score == 0.0
+      assert state.best_score == nil
+      assert state.stop_reason == :no_valid_candidates
+      assert Enum.all?(state.evaluations, &(&1.status == :error))
     end
 
     test "fitness.evaluate timeout/exit → Task.async_stream yields {:exit, reason}, logs warning" do
-      # This test verifies the engine's reduction handles {:exit, reason} tuples gracefully
-      # We test this by simulating a timeout scenario with a very long-running evaluation
       config = Config.new!(population_size: 2, generations: 1, max_concurrency: 1)
       initial_pop = ["quick", "slow"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, TimeoutFitness)
         |> Enum.to_list()
 
-      # Both entities should be evaluated (no actual timeout in this simplified test)
-      # The key point is the engine's reduction in evaluate_population handles
-      # both {:ok, {entity, score}} and {:exit, reason} patterns
       assert map_size(state.scores) >= 0
-      # This test documents that the engine handles the pattern, even if we can't
-      # easily trigger a real timeout in a test environment
     end
 
     test "verify reduction doesn't crash and results are handled" do
       config = Config.new!(population_size: 6, generations: 1, max_concurrency: 1)
       initial_pop = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, MixedFitness)
         |> Enum.to_list()
 
-      # Only even-length strings should have scores
       assert state.scores["bb"] == 2.0
       assert state.scores["dddd"] == 4.0
       assert state.scores["ffffff"] == 6.0
 
-      # Odd-length strings should get 0.0 score (error handling)
-      assert state.scores["a"] == 0.0
-      assert state.scores["ccc"] == 0.0
-      assert state.scores["eeeee"] == 0.0
+      assert state.scores["a"] == nil
+      assert state.scores["ccc"] == nil
+      assert state.scores["eeeee"] == nil
 
-      # Best score should be from the longest even-length string
       assert state.best_score == 6.0
       assert state.best_entity == "ffffff"
     end
@@ -257,7 +234,6 @@ defmodule Jido.Evolve.EngineTest do
 
   describe "basic telemetry events" do
     setup do
-      # Capture telemetry events
       test_pid = self()
 
       handler_id = :telemetry_test_handler
@@ -291,10 +267,8 @@ defmodule Jido.Evolve.EngineTest do
       |> Engine.evolve(config, TestFitness)
       |> Enum.to_list()
 
-      # Should receive evolution start event
       assert_receive {:telemetry, [:jido_evolve, :evolution, :start], %{population_size: 4}, %{config: ^config}}
 
-      # Should receive evolution stop event
       assert_receive {:telemetry, [:jido_evolve, :evolution, :stop], %{generation: _}, %{state: _}}
     end
 
@@ -306,10 +280,8 @@ defmodule Jido.Evolve.EngineTest do
       |> Engine.evolve(config, TestFitness)
       |> Enum.to_list()
 
-      # Should receive generation start event for generation 1
       assert_receive {:telemetry, [:jido_evolve, :generation, :start], %{generation: 1}, %{}}
 
-      # Should receive generation stop event for generation 1
       assert_receive {:telemetry, [:jido_evolve, :generation, :stop], %{generation: 1, best_score: _}, %{state: _}}
     end
 
@@ -321,10 +293,8 @@ defmodule Jido.Evolve.EngineTest do
       |> Engine.evolve(config, TestFitness)
       |> Enum.to_list()
 
-      # Should receive at least one evaluation start event (initial population)
       assert_receive {:telemetry, [:jido_evolve, :evaluation, :start], %{population_size: 4}, %{}}
 
-      # Should receive at least one evaluation stop event
       assert_receive {:telemetry, [:jido_evolve, :evaluation, :stop], %{evaluated_count: _}, %{}}
     end
 
@@ -336,14 +306,10 @@ defmodule Jido.Evolve.EngineTest do
       |> Engine.evolve(config, TestFitness)
       |> Enum.to_list()
 
-      # Collect all events
       events = collect_telemetry_events([])
 
-      # Extract event names
       event_names = Enum.map(events, fn {_, event, _, _} -> event end)
 
-      # Find key events - evolution and evaluation happen, order may vary slightly
-      # due to async processing, but key events should be present
       assert [:jido_evolve, :evolution, :start] in event_names
       assert [:jido_evolve, :evaluation, :start] in event_names
       assert [:jido_evolve, :generation, :start] in event_names
@@ -352,7 +318,6 @@ defmodule Jido.Evolve.EngineTest do
     end
   end
 
-  # Helper function to collect all telemetry events from mailbox
   defp collect_telemetry_events(acc) do
     receive do
       {:telemetry, _event, _measurements, _metadata} = msg ->
@@ -364,7 +329,6 @@ defmodule Jido.Evolve.EngineTest do
 
   describe "select_and_breed crossover rate branches" do
     test "crossover_rate = 1.0 → crossover called for all pairs" do
-      # With deterministic seed and crossover_rate = 1.0, all pairs should undergo crossover
       config =
         Config.new!(
           population_size: 6,
@@ -385,19 +349,12 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Get generation 1 population
       final_state = List.last(states)
 
-      # With crossover_rate = 1.0, all children should show crossover effects
-      # TestCrossover splits strings at midpoint and swaps
-      # Since mutation_rate = 0.0, we should see pure crossover results
       assert length(final_state.population) == 6
 
-      # At least some children should show crossover (mixed content from parents)
       has_crossover =
         Enum.any?(final_state.population, fn child ->
-          # Crossover creates strings that mix parent content
-          # e.g., "aa" + "bb" → "ab", "ba"
           String.length(child) == 2
         end)
 
@@ -405,7 +362,6 @@ defmodule Jido.Evolve.EngineTest do
     end
 
     test "crossover_rate = 0.0 → crossover not called, parents passed through" do
-      # With crossover_rate = 0.0, no crossover should occur
       config =
         Config.new!(
           population_size: 6,
@@ -428,11 +384,8 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # With crossover_rate = 0.0 and mutation_rate = 0.0, children should be
-      # exact copies of selected parents
       assert length(final_state.population) == 6
 
-      # All children should be from the original parent set (no mixing)
       all_from_parents =
         Enum.all?(final_state.population, fn child ->
           child in initial_pop
@@ -442,7 +395,6 @@ defmodule Jido.Evolve.EngineTest do
     end
 
     test "crossover_rate = 0.5 → some crossover, some passthrough" do
-      # With crossover_rate = 0.5, we expect roughly half to crossover
       config =
         Config.new!(
           population_size: 10,
@@ -456,7 +408,6 @@ defmodule Jido.Evolve.EngineTest do
           random_seed: 42
         )
 
-      # Use distinct strings to track crossover
       initial_pop = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"]
 
       states =
@@ -466,16 +417,10 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # Some children should be original parents, some should be crossed over
       assert length(final_state.population) == 10
 
-      # Count how many are exact parent copies vs modified
       exact_copies = Enum.count(final_state.population, &(&1 in initial_pop))
 
-      # With mutation_rate = 0.0 and crossover_rate = 0.5, we expect:
-      # - Some exact parent copies (when crossover didn't happen)
-      # - Some crossed over children (mixed content)
-      # Both categories should exist
       assert exact_copies > 0
       assert exact_copies < 10
     end
@@ -483,7 +428,6 @@ defmodule Jido.Evolve.EngineTest do
 
   describe "select_and_breed mutation rate branches" do
     test "mutation_rate = 1.0 → mutate called on all children" do
-      # With mutation_rate = 1.0, all offspring should be mutated
       config =
         Config.new!(
           population_size: 6,
@@ -506,7 +450,6 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # All children should have "_mutated" suffix from TestMutation
       all_mutated =
         Enum.all?(final_state.population, fn child ->
           String.ends_with?(child, "_mutated")
@@ -517,7 +460,6 @@ defmodule Jido.Evolve.EngineTest do
     end
 
     test "mutation_rate = 0.0 → mutate not called" do
-      # With mutation_rate = 0.0, no mutations should occur
       config =
         Config.new!(
           population_size: 6,
@@ -540,7 +482,6 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # No children should have "_mutated" suffix
       none_mutated =
         Enum.all?(final_state.population, fn child ->
           not String.ends_with?(child, "_mutated")
@@ -551,7 +492,6 @@ defmodule Jido.Evolve.EngineTest do
     end
 
     test "mutation_rate = 0.5 → some mutated, some not" do
-      # With mutation_rate = 0.5, roughly half should be mutated
       config =
         Config.new!(
           population_size: 10,
@@ -574,13 +514,11 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # Count mutated vs unmutated
       mutated_count =
         Enum.count(final_state.population, fn child ->
           String.ends_with?(child, "_mutated")
         end)
 
-      # With mutation_rate = 0.5, we expect some of each
       assert mutated_count > 0
       assert mutated_count < 10
       assert length(final_state.population) == 10
@@ -610,8 +548,6 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # Even though mutation_rate = 1.0, all mutations fail
-      # Children should be unchanged parents (no "_mutated" suffix)
       none_mutated =
         Enum.all?(final_state.population, fn child ->
           not String.ends_with?(child, "_mutated")
@@ -620,7 +556,6 @@ defmodule Jido.Evolve.EngineTest do
       assert none_mutated
       assert length(final_state.population) == 4
 
-      # All children should still be from parent set (passed through on error)
       all_from_parents =
         Enum.all?(final_state.population, fn child ->
           child in initial_pop
@@ -630,80 +565,20 @@ defmodule Jido.Evolve.EngineTest do
     end
   end
 
-  describe "select_and_breed odd parents edge case" do
-    test "TestSelection returns odd-length list → handle single parent case" do
-      config =
-        Config.new!(
-          population_size: 6,
-          generations: 2,
-          mutation_rate: 1.0,
-          crossover_rate: 0.0,
-          selection_strategy: OddSelection,
-          mutation_strategy: TestMutation,
-          elitism_rate: 0.0,
-          random_seed: 42
-        )
+  describe "selection contract" do
+    test "rejects a selection result with too few member IDs" do
+      for selection <- [OddSelection, OddSelection2] do
+        config = Config.new!(population_size: 5, generations: 1, selection_strategy: selection)
 
-      initial_pop = ["aa", "bb", "cc", "dd", "ee", "ff"]
-
-      states =
-        initial_pop
-        |> Engine.evolve(config, TestFitness)
-        |> Enum.to_list()
-
-      final_state = List.last(states)
-
-      # Should handle odd number of parents gracefully
-      # The single parent should be mutated (mutation_rate = 1.0)
-      assert length(final_state.population) == 6
-
-      # All offspring should be mutated
-      all_mutated =
-        Enum.all?(final_state.population, fn child ->
-          String.ends_with?(child, "_mutated")
-        end)
-
-      assert all_mutated
-    end
-
-    test "odd parents with mutation_rate = 0.0 → single parent passed through" do
-      config =
-        Config.new!(
-          population_size: 5,
-          generations: 2,
-          mutation_rate: 0.0,
-          crossover_rate: 0.0,
-          selection_strategy: OddSelection2,
-          mutation_strategy: TestMutation,
-          elitism_rate: 0.0,
-          random_seed: 42
-        )
-
-      initial_pop = ["aa", "bb", "cc", "dd", "ee"]
-
-      states =
-        initial_pop
-        |> Engine.evolve(config, TestFitness)
-        |> Enum.to_list()
-
-      final_state = List.last(states)
-
-      # Single parent should be passed through unchanged
-      assert length(final_state.population) == 5
-
-      # All offspring should be unmutated originals
-      all_unmutated =
-        Enum.all?(final_state.population, fn child ->
-          not String.ends_with?(child, "_mutated")
-        end)
-
-      assert all_unmutated
+        assert_raise Error.ExecutionError, ~r/requested count/, fn ->
+          Engine.evolve(["a", "b", "c", "d", "e"], config, TestFitness) |> Enum.to_list()
+        end
+      end
     end
   end
 
   describe "select_and_breed offspring count trimming" do
     test "verify Enum.take respects target offspring_count" do
-      # Test that offspring count is properly limited
       config =
         Config.new!(
           population_size: 4,
@@ -726,12 +601,10 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # Population size should match config despite crossover producing 2 children per pair
       assert length(final_state.population) == 4
     end
 
     test "offspring count with elitism → total matches population_size" do
-      # Test that elitism + offspring count = population_size
       config =
         Config.new!(
           population_size: 10,
@@ -765,15 +638,11 @@ defmodule Jido.Evolve.EngineTest do
 
       final_state = List.last(states)
 
-      # Final population should exactly match target size
       assert length(final_state.population) == 10
 
-      # Elite count should be 2 (20% of 10)
       elite_count = Config.elite_count(config)
       assert elite_count == 2
 
-      # Best entities from previous generation should be present
-      # (longest strings have highest fitness in TestFitness)
       has_elite =
         Enum.any?(final_state.population, fn entity ->
           String.length(entity) >= 7
@@ -783,7 +652,6 @@ defmodule Jido.Evolve.EngineTest do
     end
 
     test "various population sizes maintain correct offspring count" do
-      # Test multiple population sizes
       population_sizes = [4, 6, 10, 15, 20]
 
       for pop_size <- population_sizes do
@@ -809,7 +677,6 @@ defmodule Jido.Evolve.EngineTest do
 
         final_state = List.last(states)
 
-        # Each population size should be maintained exactly
         assert length(final_state.population) == pop_size,
                "Population size #{pop_size} not maintained, got #{length(final_state.population)}"
       end
@@ -841,14 +708,13 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 1
 
-      [gen0, gen1, gen2] = states
+      [gen0, gen1, gen2 | _] = states
 
       assert gen0.best_entity == "ffffff"
 
       assert "ffffff" in gen1.population,
              "Best entity should persist to generation 1"
 
-      # Best from gen1 should persist to gen2
       best_gen1 = gen1.best_entity
       assert best_gen1 in gen2.population, "Best entity from gen1 should persist to gen2"
     end
@@ -888,7 +754,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 2
 
-      [gen0, gen1] = states
+      [gen0, gen1 | _] = states
 
       top_2_gen0 =
         gen0.scores
@@ -938,7 +804,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 3
 
-      [gen0, gen1] = states
+      [gen0, gen1 | _] = states
 
       top_3_gen0 =
         gen0.scores
@@ -978,7 +844,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 2
 
-      [gen0, gen1] = states
+      [gen0, gen1 | _] = states
 
       assert gen0.best_entity == "aaaaaa"
       assert gen1.best_entity == "aaaaaa", "Best entity should persist"
@@ -1020,7 +886,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 2
 
-      [gen0, gen1, gen2, gen3] = states
+      [gen0, gen1, gen2, gen3 | _] = states
 
       best_entity = gen0.best_entity
 
@@ -1060,7 +926,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 0
 
-      [_gen0, gen1] = states
+      [_gen0, gen1 | _] = states
 
       assert length(gen1.population) == 6, "Population size should remain constant"
     end
@@ -1089,7 +955,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 1
 
-      [gen0] = states
+      [gen0 | _] = states
 
       assert length(gen0.population) == 4
       assert map_size(gen0.scores) == 4
@@ -1119,7 +985,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 4
 
-      [_gen0, gen1] = states
+      [_gen0, gen1 | _] = states
 
       assert length(gen1.population) == 4,
              "Population size should be maintained even with high elitism"
@@ -1149,7 +1015,7 @@ defmodule Jido.Evolve.EngineTest do
       elite_count = Config.elite_count(config)
       assert elite_count == 2
 
-      [gen0, gen1] = states
+      [gen0, gen1 | _] = states
 
       top_2_gen0 =
         gen0.scores
@@ -1168,6 +1034,7 @@ defmodule Jido.Evolve.EngineTest do
     test "diversity is calculated and present in state" do
       config =
         Config.new!(
+          diversity_enabled: true,
           population_size: 6,
           generations: 1,
           mutation_rate: 0.0,
@@ -1181,7 +1048,7 @@ defmodule Jido.Evolve.EngineTest do
 
       initial_pop = ["aaa", "bbb", "ccc", "ddd", "eee", "fff"]
 
-      [state] =
+      [state | _] =
         initial_pop
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
@@ -1194,6 +1061,7 @@ defmodule Jido.Evolve.EngineTest do
     test "diversity delegates to evolvable module correctly" do
       config =
         Config.new!(
+          diversity_enabled: true,
           population_size: 4,
           generations: 1,
           mutation_rate: 0.0,
@@ -1205,18 +1073,16 @@ defmodule Jido.Evolve.EngineTest do
           random_seed: 42
         )
 
-      # Use identical strings → should have low diversity
       identical_pop = ["hello", "hello", "hello", "hello"]
 
-      [identical_state] =
+      [identical_state | _] =
         identical_pop
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Use diverse strings → should have higher diversity
       diverse_pop = ["aaaa", "bbbb", "cccc", "dddd"]
 
-      [diverse_state] =
+      [diverse_state | _] =
         diverse_pop
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
@@ -1224,7 +1090,6 @@ defmodule Jido.Evolve.EngineTest do
       assert identical_state.diversity != nil
       assert diverse_state.diversity != nil
 
-      # Identical population should have lower diversity than diverse population
       assert identical_state.diversity <= diverse_state.diversity,
              "Identical population (#{identical_state.diversity}) should have lower diversity than diverse population (#{diverse_state.diversity})"
     end
@@ -1232,6 +1097,7 @@ defmodule Jido.Evolve.EngineTest do
     test "diversity calculated each generation" do
       config =
         Config.new!(
+          diversity_enabled: true,
           population_size: 6,
           generations: 3,
           mutation_rate: 0.5,
@@ -1250,7 +1116,7 @@ defmodule Jido.Evolve.EngineTest do
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      assert length(states) == 3
+      assert length(states) == 4
 
       for state <- states do
         assert state.diversity != nil,
@@ -1264,6 +1130,7 @@ defmodule Jido.Evolve.EngineTest do
     test "diversity with various population diversities" do
       config =
         Config.new!(
+          diversity_enabled: true,
           population_size: 5,
           generations: 1,
           mutation_rate: 0.0,
@@ -1275,36 +1142,32 @@ defmodule Jido.Evolve.EngineTest do
           random_seed: 42
         )
 
-      # Test with different diversity levels
       very_similar = ["hello", "hallo", "hullo", "hollo", "hillo"]
       somewhat_diverse = ["apple", "apply", "zebra", "zero", "hero"]
       very_diverse = ["a", "completely", "different", "set", "xyz"]
 
-      [very_similar_state] =
+      [very_similar_state | _] =
         very_similar
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      [somewhat_diverse_state] =
+      [somewhat_diverse_state | _] =
         somewhat_diverse
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      [very_diverse_state] =
+      [very_diverse_state | _] =
         very_diverse
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # All should have diversity calculated
       assert very_similar_state.diversity != nil
       assert somewhat_diverse_state.diversity != nil
       assert very_diverse_state.diversity != nil
 
-      # Very similar strings should have lowest diversity
       assert very_similar_state.diversity < somewhat_diverse_state.diversity,
              "Very similar should have lower diversity than somewhat diverse"
 
-      # Somewhat diverse should be between very similar and very diverse
       assert somewhat_diverse_state.diversity < very_diverse_state.diversity or
                somewhat_diverse_state.diversity > very_similar_state.diversity,
              "Diversity should correlate with population variety"
@@ -1313,6 +1176,7 @@ defmodule Jido.Evolve.EngineTest do
     test "diversity calculation with Evolvable.String uses similarity metric" do
       config =
         Config.new!(
+          diversity_enabled: true,
           population_size: 3,
           generations: 1,
           mutation_rate: 0.0,
@@ -1326,13 +1190,11 @@ defmodule Jido.Evolve.EngineTest do
 
       population = ["abc", "def", "ghi"]
 
-      [state] =
+      [state | _] =
         population
         |> Engine.evolve(config, TestFitness)
         |> Enum.to_list()
 
-      # Verify diversity is based on Jaro distance (inverted) for strings
-      # Since abc, def, ghi are quite different, diversity should be relatively high
       assert state.diversity > 0.5,
              "Diverse strings should have higher diversity, got #{state.diversity}"
     end

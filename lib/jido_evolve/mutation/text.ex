@@ -12,7 +12,7 @@ defmodule Jido.Evolve.Mutation.Text do
   @opts_schema Zoi.keyword(
                  [
                    rate: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.1),
-                   strength: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.5),
+                   strength: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(1.0),
                    operations: Zoi.list(Zoi.enum([:replace, :insert, :delete])) |> Zoi.min(1) |> Zoi.default([:replace])
                  ],
                  coerce: true
@@ -24,7 +24,7 @@ defmodule Jido.Evolve.Mutation.Text do
   ## Options
 
   - `:rate` - Mutation rate (0.0 to 1.0), default: 0.1
-  - `:strength` - Mutation strength (0.0 to 1.0), default: 0.5
+  - `:strength` - Multiplier on mutation probability (0.0 to 1.0), default: 1.0
   - `:operations` - List of allowed operations (default: [:replace])
 
   ## Examples
@@ -33,11 +33,12 @@ defmodule Jido.Evolve.Mutation.Text do
       iex> is_binary(mutated)
       true
   """
+  @impl true
   def mutate(entity, opts \\ [])
 
   def mutate(entity, opts) when is_binary(entity) do
     with {:ok, parsed_opts} <- parse_opts(opts) do
-      rate = Keyword.fetch!(parsed_opts, :rate)
+      rate = Keyword.fetch!(parsed_opts, :rate) * Keyword.fetch!(parsed_opts, :strength)
       operations = Keyword.fetch!(parsed_opts, :operations)
 
       chars = String.to_charlist(entity)
@@ -55,6 +56,7 @@ defmodule Jido.Evolve.Mutation.Text do
   Calculate mutation strength based on generation number.
   Returns a value between 0.0 and 1.0.
   """
+  @impl true
   def mutation_strength(generation) do
     # Start with high mutation strength, decrease over time
     max(0.1, 1.0 - generation / 1000.0)
@@ -109,6 +111,16 @@ defmodule Jido.Evolve.Mutation.Text do
       List.insert_at(chars, position, new_char)
     else
       chars
+    end
+  end
+
+  @impl true
+  @doc "Validate mutation options before a run starts."
+  @spec validate_opts(keyword()) :: :ok | {:error, term()}
+  def validate_opts(opts) do
+    case parse_opts(opts) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

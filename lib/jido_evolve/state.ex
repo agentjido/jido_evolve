@@ -6,7 +6,7 @@ defmodule Jido.Evolve.State do
   and metadata about the evolution process.
   """
 
-  alias Jido.Evolve.{Config, Evolvable}
+  alias Jido.Evolve.{Config, Evaluation, Evolvable, Error}
 
   @schema Zoi.struct(
             __MODULE__,
@@ -15,11 +15,20 @@ defmodule Jido.Evolve.State do
               scores: Zoi.map() |> Zoi.default(%{}),
               generation: Zoi.integer() |> Zoi.min(0) |> Zoi.default(0),
               best_entity: Zoi.any() |> Zoi.nullish(),
-              best_score: Zoi.number() |> Zoi.default(0.0),
+              best_score: Zoi.number() |> Zoi.nullish(),
               average_score: Zoi.number() |> Zoi.default(0.0),
-              diversity: Zoi.number() |> Zoi.default(0.0),
+              diversity: Zoi.number() |> Zoi.nullish(),
               fitness_history: Zoi.list(Zoi.number()) |> Zoi.default([]),
               metadata: Zoi.map() |> Zoi.default(%{}),
+              evaluations: Zoi.list(Zoi.any()) |> Zoi.default([]),
+              best_evaluation: Zoi.any() |> Zoi.nullish(),
+              evaluation_count: Zoi.integer() |> Zoi.default(0),
+              failure_count: Zoi.integer() |> Zoi.default(0),
+              stagnant_generations: Zoi.integer() |> Zoi.default(0),
+              complete: Zoi.boolean() |> Zoi.default(false),
+              last_complete_population: Zoi.any() |> Zoi.nullish(),
+              last_complete_generation: Zoi.integer() |> Zoi.nullish(),
+              stop_reason: Zoi.atom() |> Zoi.nullish(),
               config: Config.schema()
             },
             coerce: true
@@ -72,7 +81,7 @@ defmodule Jido.Evolve.State do
   def new!(attrs) do
     case new(attrs) do
       {:ok, state} -> state
-      {:error, error} -> raise error
+      {:error, error} -> raise Error.validation_error("invalid state", %{errors: error})
     end
   end
 
@@ -83,24 +92,60 @@ defmodule Jido.Evolve.State do
   """
   @spec update_scores(t(), map()) :: t()
   def update_scores(%__MODULE__{} = state, scores) when is_map(scores) do
-    {best_entity, best_score} = find_best(scores)
-    average_score = calculate_average(scores)
+    records =
+      state.population
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {entity, index} ->
+        case Map.fetch(scores, entity) do
+          {:ok, score} when is_number(score) -> [Evaluation.new({state.generation, index}, entity, {:ok, score})]
+          _ -> []
+        end
+      end)
+
+    update_evaluations(state, records, length(records), nil)
+  end
+
+  @doc "Store member evaluations and update the best result seen across the run."
+  @spec update_evaluations(t(), list(Evaluation.t()), non_neg_integer(), atom() | nil) :: t()
+  def update_evaluations(state, records, attempts, stop_reason) do
+    valid = Enum.filter(records, &(&1.status == :ok))
+    best = Enum.reduce(valid, nil, &better(&1, &2, state.config.objective))
+    overall = if best, do: better(best, state.best_evaluation, state.config.objective), else: state.best_evaluation
+    improved = overall != state.best_evaluation
+    complete = length(records) == length(state.population) and not Enum.any?(records, &(&1.status == :cancelled))
+    average = if valid == [], do: 0.0, else: Enum.sum(Enum.map(valid, & &1.score)) / length(valid)
 
     %{
       state
-      | scores: scores,
-        best_entity: best_entity,
-        best_score: best_score,
-        average_score: average_score
+      | evaluations: records,
+        scores: Map.new(valid, &{&1.entity, &1.score}),
+        best_entity: if(best, do: best.entity),
+        best_score: if(best, do: best.score),
+        best_evaluation: overall,
+        average_score: average,
+        evaluation_count: state.evaluation_count + attempts,
+        failure_count: state.failure_count + Enum.count(records, &(&1.status != :ok)),
+        stagnant_generations: if(improved or state.generation == 0, do: 0, else: state.stagnant_generations + 1),
+        complete: complete,
+        last_complete_population: if(complete, do: state.population, else: state.last_complete_population),
+        last_complete_generation: if(complete, do: state.generation, else: state.last_complete_generation),
+        stop_reason: stop_reason
     }
   end
+
+  defp better(record, nil, _objective), do: record
+  defp better(record, previous, :maximize), do: if(record.score > previous.score, do: record, else: previous)
+  defp better(record, previous, :minimize), do: if(record.score < previous.score, do: record, else: previous)
 
   @doc """
   Update the population and advance the generation counter.
   """
   @spec next_generation(t(), list(any())) :: t()
   def next_generation(%__MODULE__{} = state, new_population) do
-    new_history = [state.best_score | state.fitness_history] |> Enum.take(100)
+    new_history =
+      if state.best_score == nil,
+        do: state.fitness_history,
+        else: Enum.take([state.best_score | state.fitness_history], 100)
 
     %{
       state
@@ -108,7 +153,10 @@ defmodule Jido.Evolve.State do
         generation: state.generation + 1,
         scores: %{},
         best_entity: nil,
-        best_score: 0.0,
+        best_score: nil,
+        evaluations: [],
+        complete: false,
+        stop_reason: nil,
         average_score: 0.0,
         fitness_history: new_history
     }
@@ -120,6 +168,8 @@ defmodule Jido.Evolve.State do
   This is useful for monitoring convergence and maintaining diversity.
   """
   @spec calculate_diversity(t()) :: t()
+  def calculate_diversity(%__MODULE__{config: %Config{diversity_enabled: false}} = state), do: %{state | diversity: nil}
+
   def calculate_diversity(%__MODULE__{population: population} = state) do
     diversity = calculate_population_diversity(population)
     %{state | diversity: diversity}
@@ -142,99 +192,31 @@ defmodule Jido.Evolve.State do
     Enum.any?(criteria, &check_criterion(state, &1))
   end
 
-  defp find_best(scores) when map_size(scores) == 0, do: {nil, 0.0}
-
-  defp find_best(scores) do
-    Enum.max_by(scores, fn {_entity, score} -> score end)
-  end
-
-  defp calculate_average(scores) when map_size(scores) == 0, do: 0.0
-
-  defp calculate_average(scores) do
-    sum = scores |> Map.values() |> Enum.sum()
-    sum / map_size(scores)
-  end
-
-  defp calculate_population_diversity(population) when length(population) < 2 do
-    0.0
-  end
+  defp calculate_population_diversity(population) when length(population) < 2, do: 0.0
 
   defp calculate_population_diversity(population) do
-    pop_size = length(population)
-    max_samples = 1000
+    members = Enum.with_index(population)
 
-    if pop_size < 10 do
-      pairs = for i <- population, j <- population, i != j, do: {i, j}
-
-      if Enum.empty?(pairs) do
-        0.0
+    pairs =
+      if length(population) < 10 do
+        for {a, i} <- members, {b, j} <- members, i < j, do: {a, b}
       else
-        total_similarity =
-          pairs
-          |> Enum.map(fn {a, b} -> Evolvable.similarity(a, b) end)
-          |> Enum.sum()
-
-        total_similarity / length(pairs)
-      end
-    else
-      sample_count = min(max_samples, div(pop_size * pop_size, 10))
-
-      sampled_similarities =
-        1..sample_count
-        |> Enum.map(fn _ ->
-          i = Enum.random(population)
-          j = Enum.random(population)
-
-          if i == j do
-            candidates = population -- [i]
-
-            if Enum.empty?(candidates) do
-              0.0
-            else
-              Evolvable.similarity(i, Enum.random(candidates))
-            end
-          else
-            Evolvable.similarity(i, j)
-          end
+        Enum.map(1..min(1000, length(population) * 10), fn _ ->
+          [{a, _}, {b, _}] = Enum.take_random(members, 2)
+          {a, b}
         end)
-
-      if Enum.empty?(sampled_similarities) do
-        0.0
-      else
-        Enum.sum(sampled_similarities) / length(sampled_similarities)
       end
-    end
+
+    Enum.sum(Enum.map(pairs, fn {a, b} -> Evolvable.similarity(a, b) end)) / length(pairs)
   end
 
-  defp check_criterion(state, {:max_generations, max_gen}) do
-    state.generation >= max_gen
-  end
+  defp check_criterion(state, {:max_generations, max_gen}), do: state.generation >= max_gen
+  defp check_criterion(%{best_score: nil}, {:target_fitness, _target}), do: false
 
-  defp check_criterion(state, {:target_fitness, target}) do
-    state.best_score >= target
-  end
+  defp check_criterion(%{config: %{objective: :minimize}} = state, {:target_fitness, target}),
+    do: state.best_score <= target
 
-  defp check_criterion(state, {:no_improvement, generations}) do
-    if length(state.fitness_history) < generations do
-      false
-    else
-      recent_scores = Enum.take(state.fitness_history, generations)
-
-      if length(recent_scores) < 2 do
-        false
-      else
-        mean = Enum.sum(recent_scores) / length(recent_scores)
-
-        variance =
-          recent_scores
-          |> Enum.map(fn score -> :math.pow(score - mean, 2) end)
-          |> Enum.sum()
-          |> Kernel./(length(recent_scores))
-
-        variance < 0.0001
-      end
-    end
-  end
-
+  defp check_criterion(state, {:target_fitness, target}), do: state.best_score >= target
+  defp check_criterion(state, {:no_improvement, generations}), do: state.stagnant_generations >= generations
   defp check_criterion(_state, _criterion), do: false
 end

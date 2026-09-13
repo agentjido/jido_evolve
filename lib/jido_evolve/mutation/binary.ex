@@ -52,6 +52,16 @@ defmodule Jido.Evolve.Mutation.Binary do
     end
   end
 
+  @impl true
+  @doc "Validate mutation options before a run starts."
+  @spec validate_opts(keyword()) :: :ok | {:error, term()}
+  def validate_opts(opts) do
+    case parse_opts(opts) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp parse_opts(opts) when is_list(opts) do
     case Zoi.parse(@opts_schema, opts) do
       {:ok, parsed_opts} ->

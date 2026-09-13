@@ -29,6 +29,7 @@ defmodule Jido.Evolve.OptionsTest do
   test "new/1 accepts config and strategy overrides" do
     config =
       Config.new!(
+        population_size: 3,
         mutation_strategy: Jido.Evolve.Mutation.Text,
         selection_strategy: Jido.Evolve.Selection.Tournament,
         crossover_strategy: Jido.Evolve.Crossover.String

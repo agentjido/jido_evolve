@@ -82,7 +82,7 @@ defmodule Jido.Evolve.ConfigTest do
   end
 
   test "rejects non keyword/map config input" do
-    assert {:error, %ArgumentError{message: "config options must be a keyword list or map"}} =
+    assert {:error, %Jido.Evolve.Error.ConfigError{message: "config options must be a keyword list or map"}} =
              Jido.Evolve.Config.new(:invalid)
   end
 

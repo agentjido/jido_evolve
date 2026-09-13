@@ -8,7 +8,11 @@ defmodule Jido.Evolve.Mutation do
 
   @type entity :: term()
   @type opts :: keyword()
-  @type feedback :: map()
+  @type feedback :: term()
+
+  @doc "Validate strategy options before evaluation starts."
+  @callback validate_opts(keyword()) :: :ok | {:error, term()}
+  @optional_callbacks validate_opts: 1
 
   @doc """
   Mutate an entity.
@@ -35,8 +39,9 @@ defmodule Jido.Evolve.Mutation do
   @doc """
   Mutate an entity with feedback from previous evaluations.
 
-  This allows for more intelligent mutations that take into
-  account what has worked well in the past.
+  The engine supplies feedback from the source parent. It also passes that
+  parent record as `opts[:parent_evaluation]`. Crossover children have not yet
+  been evaluated.
   """
   @callback mutate_with_feedback(entity(), feedback(), opts()) ::
               {:ok, entity()} | {:error, term()}

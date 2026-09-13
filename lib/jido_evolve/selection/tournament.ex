@@ -1,91 +1,38 @@
 defmodule Jido.Evolve.Selection.Tournament do
-  @moduledoc """
-  Tournament selection strategy.
-
-  Selects entities by running tournaments between randomly chosen
-  candidates and picking the winner based on fitness scores.
-  """
+  @moduledoc "Tournament selection. Scores are utilities: larger values win."
 
   use Jido.Evolve.Selection
 
-  @opts_schema Zoi.keyword(
-                 [
-                   tournament_size: Zoi.integer() |> Zoi.min(1) |> Zoi.default(2),
-                   pressure: Zoi.number() |> Zoi.min(0.0) |> Zoi.default(1.0)
-                 ],
-                 coerce: true
-               )
+  @doc "Select `count` members with replacement. Unscored members are excluded."
+  @spec select(list(), map(), non_neg_integer(), keyword()) :: list()
+  @impl true
+  def select(population, scores, count, opts \\ [])
 
-  @doc """
-  Select entities using tournament selection.
+  def select(population, scores, count, opts) when is_list(opts) do
+    size = Keyword.get(opts, :tournament_size, 2)
+    valid = Enum.filter(population, &is_number(Map.get(scores, &1)))
 
-  ## Options
-
-  - `:tournament_size` - Number of entities in each tournament (default: 2)
-  - `:pressure` - Selection pressure multiplier (default: 1.0)
-
-  ## Examples
-
-      population = ["a", "b", "c", "d"]
-      scores = %{"a" => 0.8, "b" => 0.6, "c" => 0.9, "d" => 0.3}
-      selected = Jido.Evolve.Selection.Tournament.select(population, scores, 2, tournament_size: 2)
-  """
-  def select(population, scores, count, opts \\ []) do
-    with {:ok, parsed_opts} <- parse_opts(opts) do
-      tournament_size = Keyword.fetch!(parsed_opts, :tournament_size)
-      pressure = Keyword.fetch!(parsed_opts, :pressure)
-
-      if Enum.empty?(population) or map_size(scores) == 0 do
-        []
-      else
-        1..count
-        |> Enum.map(fn _ ->
-          run_tournament(population, scores, tournament_size, pressure)
-        end)
-      end
+    if count <= 0 or valid == [] or validate_opts(opts) != :ok do
+      []
     else
-      {:error, _reason} ->
-        []
+      Enum.map(1..count, fn _ ->
+        valid |> Enum.take_random(min(size, length(valid))) |> Enum.max_by(&Map.fetch!(scores, &1))
+      end)
     end
   end
 
-  # Private functions
+  def select(_population, _scores, _count, _opts), do: []
 
-  defp run_tournament(population, scores, tournament_size, pressure) do
-    # Select random candidates for tournament
-    candidates = Enum.take_random(population, min(tournament_size, length(population)))
+  @impl true
+  @doc "Validate tournament size. Selection pressure was removed; use tournament size."
+  @spec validate_opts(keyword()) :: :ok | {:error, String.t()}
+  def validate_opts(opts) do
+    size = Keyword.get(opts, :tournament_size, 2)
 
-    # Get candidate scores and normalize
-    candidate_scores = Enum.map(candidates, fn c -> Map.get(scores, c, 0.0) end)
-    min_score = Enum.min(candidate_scores)
-    max_score = Enum.max(candidate_scores)
-
-    # Find the best candidate based on fitness scores
-    candidates
-    |> Enum.map(fn candidate ->
-      score = Map.get(scores, candidate, 0.0)
-      # Normalize to [0, 1] range before applying pressure
-      normalized =
-        if max_score == min_score,
-          do: 1.0,
-          else: (score - min_score) / (max_score - min_score)
-
-      adjusted_score = :math.pow(normalized, pressure)
-      {candidate, adjusted_score}
-    end)
-    |> Enum.max_by(fn {_candidate, score} -> score end)
-    |> elem(0)
-  end
-
-  defp parse_opts(opts) when is_list(opts) do
-    case Zoi.parse(@opts_schema, opts) do
-      {:ok, parsed_opts} ->
-        {:ok, parsed_opts}
-
-      {:error, errors} ->
-        {:error, "invalid tournament selection opts: #{inspect(Zoi.treefy_errors(errors))}"}
+    cond do
+      Keyword.has_key?(opts, :pressure) -> {:error, "pressure is not supported; use tournament_size"}
+      not is_integer(size) or size < 1 -> {:error, "tournament_size must be positive"}
+      true -> :ok
     end
   end
-
-  defp parse_opts(_opts), do: {:error, "invalid tournament selection opts: expected keyword list"}
 end

@@ -53,6 +53,7 @@ defmodule TestSelection do
     population
     |> Enum.map(fn entity -> {entity, Map.get(scores, entity, 0.0)} end)
     |> Enum.sort_by(fn {_entity, score} -> score end, :desc)
+    |> Stream.cycle()
     |> Enum.take(count)
     |> Enum.map(fn {entity, _score} -> entity end)
   end

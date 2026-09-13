@@ -73,7 +73,8 @@ defmodule Jido.Evolve.Examples.HelloWorld do
     crossover_rate = Keyword.get(opts, :crossover_rate, 0.8)
     elitism_rate = Keyword.get(opts, :elitism_rate, 0.02)
     target_fitness = Keyword.get(opts, :target_fitness, 0.99)
-    seed = Keyword.get(opts, :seed, Enum.map(1..population_size, fn _ -> random_string() end))
+    seed = Keyword.get_lazy(opts, :seed, fn -> Enum.map(1..population_size, fn _ -> random_string() end) end)
+    seed = seed |> Stream.cycle() |> Enum.take(population_size)
     verbose = Keyword.get(opts, :verbose, false)
 
     # Create configuration with adaptive mutation
@@ -113,9 +114,6 @@ defmodule Jido.Evolve.Examples.HelloWorld do
         end
 
         state
-      end)
-      |> Stream.take_while(fn state ->
-        state.best_score < target_fitness and state.generation < generations
       end)
       |> Enum.to_list()
       |> List.last()

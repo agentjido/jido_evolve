@@ -140,7 +140,8 @@ defmodule Jido.Evolve.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
-        "guides/getting-started.md"
+        "guides/getting-started.md",
+        "guides/migration.md"
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/

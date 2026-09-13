@@ -8,16 +8,26 @@ defmodule Jido.Evolve.Fitness do
 
   @type entity :: term()
   @type context :: map()
-  @type score :: float()
-  @type metadata :: map()
-  @type score_map :: %{required(:score) => score(), optional(:metadata) => metadata()}
-  @type eval_result :: {:ok, score()} | {:ok, score_map()} | {:error, term()}
+  @type score :: number()
+  @type metadata :: term()
+  @type score_map :: %{
+          required(:score) => score(),
+          optional(:metadata) => metadata(),
+          optional(:feedback) => term(),
+          optional(atom()) => term()
+        }
+  @type eval_result :: {:ok, score()} | {:ok, score_map()} | {:invalid, term()} | {:error, term()}
 
   @doc """
   Evaluate a single entity's fitness.
 
   Returns either a simple score or a score with metadata.
-  Higher scores indicate better fitness.
+  Config selects maximization or minimization. Return `{:invalid, reason}` for
+  invalid candidates and `{:error, reason}` for failed evaluation. Neither has a score.
+
+  Use `Jido.Evolve.Cleanup.register/1` if the callback owns detached work.
+  Registered functions run outside the callback after success, failure, timeout,
+  or cancellation. An `after` block cannot run when the worker is forcibly killed.
 
   ## Examples
 

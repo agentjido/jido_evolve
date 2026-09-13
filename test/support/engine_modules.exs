@@ -14,10 +14,11 @@ defmodule TestEngine.CustomSelection do
   @behaviour Jido.Evolve.Selection
 
   @impl true
-  def select(population, scores, count, _opts) do
+  def select(population, scores, count, opts) do
     population
     |> Enum.map(fn entity -> {entity, Map.get(scores, entity, 0.0)} end)
-    |> Enum.sort_by(fn {entity, _score} -> String.length(entity) end, :asc)
+    |> Enum.sort_by(fn {entity, _score} -> String.length(Keyword.fetch!(opts, :evaluations)[entity].entity) end, :asc)
+    |> Stream.cycle()
     |> Enum.take(count)
     |> Enum.map(fn {entity, _score} -> entity end)
   end
@@ -154,7 +155,8 @@ defmodule TestEngine.AlwaysWorseSelection do
   @behaviour Jido.Evolve.Selection
 
   @impl true
-  def select(_population, _scores, count, _opts) do
-    Enum.map(1..count, fn _ -> "x" end)
+  def select(population, scores, count, _opts) do
+    worst = Enum.min_by(population, &Map.fetch!(scores, &1))
+    List.duplicate(worst, count)
   end
 end
