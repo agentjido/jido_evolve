@@ -1,381 +1,199 @@
 defmodule Jido.Evolve.Engine do
-  @moduledoc """
-  Core evolutionary algorithm engine.
+  @moduledoc "A lazy generational genetic algorithm with bounded evaluation."
 
-  Provides a stream-based interface for running evolutionary algorithms
-  with pluggable strategies for fitness, mutation, selection, and crossover.
-  """
+  alias Jido.Evolve.{Config, Error, Evaluator, Options, Random, State}
 
-  require Logger
-
-  alias Jido.Evolve.{Config, Error, State}
-
-  @runtime_opts_schema Zoi.keyword(
-                         [
-                           mutation: Zoi.atom() |> Zoi.refine({__MODULE__, :validate_mutation_module, []}),
-                           selection: Zoi.atom() |> Zoi.refine({__MODULE__, :validate_selection_module, []}),
-                           crossover: Zoi.atom() |> Zoi.refine({__MODULE__, :validate_crossover_module, []}),
-                           context: Zoi.map() |> Zoi.default(%{})
-                         ],
-                         coerce: true
-                       )
-
-  @doc """
-  Run an evolutionary algorithm with the given configuration.
-
-  Returns a stream of `Jido.Evolve.State` structs representing each generation.
-  The stream is lazy, so generations are only computed when consumed.
-
-  ## Options
-
-  - `:mutation` - Module implementing `Jido.Evolve.Mutation` (default from config)
-  - `:selection` - Module implementing `Jido.Evolve.Selection` (default from config)
-  - `:crossover` - Module implementing `Jido.Evolve.Crossover` (default from config)
-  - `:context` - Context map passed to fitness evaluation
-  """
-  @spec evolve(list(any()), Config.t(), module()) :: Enumerable.t()
-  def evolve(initial_population, %Config{} = config, fitness_module) do
-    evolve(initial_population, config, fitness_module, [])
-  end
-
-  @spec evolve(list(any()), Config.t(), module(), keyword()) :: Enumerable.t()
-  def evolve(initial_population, %Config{} = config, fitness_module, opts) when is_list(opts) do
-    with {:ok, parsed_opts} <- parse_runtime_opts(opts),
-         {:ok, mutation_module} <-
-           resolve_strategy(Keyword.get(parsed_opts, :mutation, config.mutation_strategy), :mutation),
-         {:ok, selection_module} <-
-           resolve_strategy(Keyword.get(parsed_opts, :selection, config.selection_strategy), :selection),
-         {:ok, crossover_module} <-
-           resolve_strategy(Keyword.get(parsed_opts, :crossover, config.crossover_strategy), :crossover) do
-      context = Keyword.get(parsed_opts, :context, %{})
-
-      Config.init_random_seed(config)
-
-      initial_state =
-        initial_population
-        |> State.new(config)
-        |> evaluate_population(fitness_module, context)
-        |> State.calculate_diversity()
-
-      maybe_emit(config, [:jido_evolve, :evolution, :start], %{population_size: length(initial_population)}, %{
-        config: config
-      })
-
-      Stream.unfold(initial_state, fn state ->
-        if State.terminated?(state) or state.generation >= config.generations do
-          maybe_emit(config, [:jido_evolve, :evolution, :stop], %{generation: state.generation}, %{state: state})
-          nil
-        else
-          next_state =
-            evolution_step(
-              state,
-              fitness_module,
-              mutation_module,
-              selection_module,
-              crossover_module,
-              context
-            )
-
-          {state, next_state}
-        end
-      end)
-    else
-      {:error, error} -> raise error
+  @doc "Build a stream. `generations` counts transitions after generation 0."
+  @spec evolve(list(), Config.t(), module(), keyword()) :: Enumerable.t()
+  def evolve(population, %Config{} = config, fitness, opts \\ []) do
+    if not is_list(opts) or not Keyword.keyword?(opts) do
+      raise Error.validation_error("engine options must be a keyword list")
     end
+
+    normalized = Options.new!(Keyword.merge(opts, initial_population: population, config: config, fitness: fitness))
+    stream(normalized)
   end
 
   @doc false
-  @spec evolve(list(any()), Config.t(), module(), any()) :: Enumerable.t()
-  def evolve(_initial_population, %Config{}, _fitness_module, _opts) do
-    raise Error.validation_error("engine options must be a keyword list", %{field: :opts})
+  @spec stream(Options.t()) :: Enumerable.t()
+  def stream(opts) do
+    Stream.resource(
+      fn ->
+        deadline = if opts.config.deadline_ms, do: System.monotonic_time(:millisecond) + opts.config.deadline_ms
+
+        emit(opts.config, [:evolution, :start], %{population_size: length(opts.initial_population)}, %{
+          config: opts.config
+        })
+
+        {nil, Random.seed(opts.config.random_seed), deadline}
+      end,
+      fn
+        {%State{stop_reason: reason}, _, _} = resource when reason != nil ->
+          {:halt, resource}
+
+        {previous, random, deadline} ->
+          {state, next_random} = Random.with_state(random, fn -> advance(previous, opts, deadline) end)
+          {[state], {state, next_random, deadline}}
+      end,
+      fn {state, _, _} ->
+        emit(opts.config, [:evolution, :stop], %{generation: if(state, do: state.generation)}, %{state: state})
+      end
+    )
   end
 
-  @doc """
-  Perform a single evolution step.
-  """
+  @doc "Perform one transition from an evaluated state."
   @spec evolution_step(State.t(), module(), module(), module(), module(), map()) :: State.t()
-  def evolution_step(
-        state,
-        fitness_module,
-        mutation_module,
-        selection_module,
-        crossover_module,
-        context
-      ) do
-    generation = state.generation + 1
+  def evolution_step(state, fitness, mutation, selection, crossover, context) do
+    opts =
+      Options.new!(
+        initial_population: state.population,
+        config: state.config,
+        fitness: fitness,
+        mutation: mutation,
+        selection: selection,
+        crossover: crossover,
+        context: context
+      )
 
-    Logger.debug("Starting generation #{generation}",
-      generation: generation,
-      population_size: length(state.population),
-      best_score: state.best_score
-    )
-
-    maybe_emit(state.config, [:jido_evolve, :generation, :start], %{generation: generation}, %{})
-
-    new_state =
-      state
-      |> select_and_breed(selection_module, mutation_module, crossover_module)
-      |> apply_elitism(state)
-      |> then(&State.next_generation(&1, &1.population))
-      |> evaluate_population(fitness_module, context)
-      |> State.calculate_diversity()
-
-    Logger.debug("Completed generation #{generation}",
-      generation: generation,
-      best_score: new_state.best_score,
-      diversity: new_state.diversity
-    )
-
-    maybe_emit(
-      state.config,
-      [:jido_evolve, :generation, :stop],
-      %{generation: generation, best_score: new_state.best_score},
-      %{state: new_state}
-    )
-
-    new_state
+    advance(state, opts, nil)
   end
 
-  defp evaluate_population(%State{population: population, config: config} = state, fitness_module, context) do
-    Logger.debug("Evaluating population", population_size: length(population))
+  defp advance(nil, opts, deadline) do
+    opts.initial_population |> State.new(opts.config) |> evaluate(opts, deadline) |> finish()
+  end
 
-    maybe_emit(config, [:jido_evolve, :evaluation, :start], %{population_size: length(population)}, %{})
+  defp advance(state, opts, deadline) do
+    case Evaluator.stop_reason(opts, deadline) do
+      nil ->
+        state
+        |> State.next_generation(breed(state, opts))
+        |> evaluate(opts, deadline)
+        |> finish()
+
+      reason ->
+        %{state | stop_reason: reason}
+    end
+  end
+
+  defp evaluate(state, opts, deadline) do
+    emit(state.config, [:generation, :start], %{generation: state.generation}, %{})
+    emit(state.config, [:evaluation, :start], %{population_size: length(state.population)}, %{})
+    {records, attempts, reason} = Evaluator.evaluate(state.population, state.generation, opts, deadline)
+    state = State.update_evaluations(state, records, attempts, reason) |> State.calculate_diversity()
+    emit(state.config, [:evaluation, :stop], %{evaluated_count: attempts}, %{evaluations: records})
+
+    emit(state.config, [:generation, :stop], %{generation: state.generation, best_score: state.best_score}, %{
+      state: state
+    })
+
+    state
+  end
+
+  defp finish(%State{stop_reason: reason} = state) when reason != nil, do: state
+
+  defp finish(state) do
+    reason =
+      cond do
+        not Enum.any?(state.evaluations, &(&1.status == :ok)) ->
+          :no_valid_candidates
+
+        State.terminated?(state) ->
+          :termination_criterion
+
+        state.generation >= state.config.generations ->
+          :generations
+
+        state.config.max_evaluations != nil and
+            state.evaluation_count + state.config.population_size > state.config.max_evaluations ->
+          :max_evaluations
+
+        true ->
+          nil
+      end
+
+    %{state | stop_reason: reason}
+  end
+
+  defp breed(state, opts) do
+    valid = Enum.filter(state.evaluations, &(&1.status == :ok))
+    if valid == [], do: raise(Error.execution_error("cannot breed without valid evaluations"))
+    order = if state.config.objective == :maximize, do: :desc, else: :asc
+    elites = valid |> Enum.sort_by(& &1.score, order) |> Enum.take(Config.elite_count(state.config))
+    needed = state.config.population_size - length(elites)
+    offspring = if needed == 0, do: [], else: offspring(valid, needed, state, opts)
+    Enum.map(elites, & &1.entity) ++ offspring
+  end
+
+  defp offspring(valid, needed, state, opts) do
+    records = Map.new(valid, &{&1.id, &1})
 
     scores =
-      population
-      |> Task.async_stream(
-        fn entity ->
-          case fitness_module.evaluate(entity, context) do
-            {:ok, score} when is_number(score) ->
-              {entity, score}
+      Map.new(valid, fn record ->
+        score = if state.config.objective == :maximize, do: record.score, else: -record.score
+        {record.id, score}
+      end)
 
-            {:ok, %{score: score}} when is_number(score) ->
-              {entity, score}
+    selection_opts = Keyword.merge([tournament_size: state.config.tournament_size], opts.selection_opts)
+    selection_opts = Keyword.put(selection_opts, :evaluations, records)
+    count = 2 * div(needed + 1, 2)
+    parents = opts.selection.select(Enum.map(valid, & &1.id), scores, count, selection_opts)
 
-            {:error, reason} ->
-              log_warning(Error.execution_error("fitness evaluation failed", %{error: reason}))
-              {entity, 0.0}
+    if not is_list(parents) or length(parents) != count or Enum.any?(parents, &(not Map.has_key?(records, &1))) do
+      raise Error.execution_error("selection must return the requested count of valid member IDs")
+    end
 
-            other ->
-              log_warning(Error.execution_error("fitness evaluation returned invalid value", %{value: other}))
-              {entity, 0.0}
-          end
-        end,
-        max_concurrency: config.max_concurrency,
-        timeout: config.evaluation_timeout,
-        on_timeout: :kill_task
+    parents
+    |> Enum.map(&Map.fetch!(records, &1))
+    |> Enum.chunk_every(2)
+    |> Enum.flat_map(fn [a, b] ->
+      {child1, child2} =
+        if :rand.uniform() < state.config.crossover_rate do
+          opts.crossover.crossover(
+            a.entity,
+            b.entity,
+            Map.merge(Map.from_struct(state.config), Map.new(opts.crossover_opts))
+          )
+        else
+          {a.entity, b.entity}
+        end
+
+      [{child1, a}, {child2, b}]
+    end)
+    |> Enum.take(needed)
+    |> Enum.map(fn {child, parent} -> mutate(child, parent, state, opts) end)
+  end
+
+  defp mutate(child, parent, state, opts) do
+    strength =
+      if function_exported?(opts.mutation, :mutation_strength, 1),
+        do: opts.mutation.mutation_strength(state.generation),
+        else: 1.0
+
+    mutation_opts =
+      Keyword.merge(
+        [rate: state.config.mutation_rate, strength: strength, best_fitness: state.best_score],
+        opts.mutation_opts
       )
-      |> Enum.reduce(%{}, fn
-        {:ok, {entity, score}}, acc ->
-          Map.put(acc, entity, score)
 
-        {:exit, reason}, acc ->
-          log_warning(Error.execution_error("fitness evaluation timed out", %{reason: reason}))
-          acc
-      end)
+    mutation_opts = Keyword.put(mutation_opts, :parent_evaluation, parent)
 
-    Logger.debug("Population evaluated", evaluated_count: map_size(scores))
-
-    maybe_emit(config, [:jido_evolve, :evaluation, :stop], %{evaluated_count: map_size(scores)}, %{})
-
-    State.update_scores(state, scores)
-  end
-
-  defp select_and_breed(
-         %State{population: population, scores: scores, config: config} = state,
-         selection_module,
-         mutation_module,
-         crossover_module
-       ) do
-    elite_count = Config.elite_count(config)
-    offspring_count = config.population_size - elite_count
-
-    Logger.debug("Selecting and breeding", offspring_count: offspring_count, elite_count: elite_count)
-
-    selection_opts = [
-      tournament_size: config.tournament_size,
-      pressure: config.selection_pressure
-    ]
-
-    all_parents = selection_module.select(population, scores, offspring_count * 2, selection_opts)
-
-    offspring =
-      all_parents
-      |> Enum.chunk_every(2)
-      |> Enum.flat_map(fn
-        [parent1, parent2] ->
-          {child1, child2} =
-            if :rand.uniform() < config.crossover_rate do
-              crossover_module.crossover(parent1, parent2, config)
-            else
-              {parent1, parent2}
-            end
-
-          [child1, child2]
-          |> Enum.map(&maybe_mutate(&1, mutation_module, config, state))
-
-        [single_parent] ->
-          [maybe_mutate(single_parent, mutation_module, config, state)]
-      end)
-      |> Enum.take(offspring_count)
-
-    Logger.debug("Breeding complete", offspring_count: length(offspring))
-
-    %{state | population: offspring}
-  end
-
-  defp maybe_mutate(child, mutation_module, config, state) do
-    mutation_opts = [
-      rate: config.mutation_rate,
-      strength: mutation_strength(mutation_module, state.generation),
-      best_fitness: state.best_score || 0.0
-    ]
-
-    case mutation_module.mutate(child, mutation_opts) do
-      {:ok, mutated} ->
-        mutated
-
-      {:error, reason} ->
-        log_warning(Error.execution_error("mutation failed", %{error: reason}))
-        child
-
-      other ->
-        log_warning(Error.execution_error("mutation returned invalid value", %{value: other}))
-        child
-    end
-  end
-
-  defp mutation_strength(module, generation) do
-    if function_exported?(module, :mutation_strength, 1) do
-      module.mutation_strength(generation)
-    else
-      1.0
-    end
-  end
-
-  defp apply_elitism(
-         %State{population: offspring} = new_state,
-         %State{scores: old_scores, config: config}
-       ) do
-    elite_count = Config.elite_count(config)
-
-    if elite_count > 0 and map_size(old_scores) > 0 do
-      elites =
-        old_scores
-        |> Enum.sort_by(fn {_entity, score} -> score end, :desc)
-        |> Enum.take(elite_count)
-        |> Enum.map(fn {entity, _score} -> entity end)
-
-      final_population = Enum.take(elites ++ offspring, config.population_size)
-      %{new_state | population: final_population}
-    else
-      new_state
-    end
-  end
-
-  defp maybe_emit(%Config{metrics_enabled: true}, event, measurements, metadata) do
-    :telemetry.execute(event, measurements, metadata)
-  end
-
-  defp maybe_emit(%Config{metrics_enabled: false}, _event, _measurements, _metadata), do: :ok
-
-  defp log_warning(error) do
-    Logger.warning(Exception.message(error), details: Map.from_struct(error))
-  end
-
-  defp parse_runtime_opts(opts) do
-    with :ok <- validate_runtime_opts_shape(opts),
-         :ok <- reject_unknown_runtime_keys(opts) do
-      case Zoi.parse(@runtime_opts_schema, opts) do
-        {:ok, parsed_opts} ->
-          {:ok, parsed_opts}
-
-        {:error, errors} ->
-          {:error, Error.validation_error("invalid runtime evolve options", %{details: Zoi.treefy_errors(errors)})}
+    result =
+      if parent.feedback != nil and function_exported?(opts.mutation, :mutate_with_feedback, 3) do
+        opts.mutation.mutate_with_feedback(child, parent.feedback, mutation_opts)
+      else
+        opts.mutation.mutate(child, mutation_opts)
       end
+
+    case result do
+      {:ok, entity} -> entity
+      {:error, _reason} -> child
+      other -> raise Error.execution_error("invalid mutation result", %{result: other})
     end
   end
 
-  defp validate_runtime_opts_shape(opts) do
-    if Keyword.keyword?(opts) do
-      :ok
-    else
-      {:error, Error.validation_error("engine options must be a keyword list", %{field: :opts, value: opts})}
-    end
+  defp emit(%Config{metrics_enabled: true}, event, measurements, metadata) do
+    :telemetry.execute([:jido_evolve | event], measurements, metadata)
   end
 
-  defp reject_unknown_runtime_keys(opts) do
-    allowed_keys = [:mutation, :selection, :crossover, :context]
-
-    unknown_keys =
-      opts
-      |> Keyword.keys()
-      |> Enum.uniq()
-      |> Enum.reject(&(&1 in allowed_keys))
-
-    if Enum.empty?(unknown_keys) do
-      :ok
-    else
-      {:error,
-       Error.validation_error("invalid runtime evolve options", %{field: :opts, unknown_keys: unknown_keys, value: opts})}
-    end
-  end
-
-  defp resolve_strategy(module, :mutation) do
-    case validate_mutation_module(module, []) do
-      :ok ->
-        {:ok, module}
-
-      {:error, message} ->
-        {:error, Error.validation_error(message, %{field: :mutation, value: module})}
-    end
-  end
-
-  defp resolve_strategy(module, :selection) do
-    case validate_selection_module(module, []) do
-      :ok ->
-        {:ok, module}
-
-      {:error, message} ->
-        {:error, Error.validation_error(message, %{field: :selection, value: module})}
-    end
-  end
-
-  defp resolve_strategy(module, :crossover) do
-    case validate_crossover_module(module, []) do
-      :ok ->
-        {:ok, module}
-
-      {:error, message} ->
-        {:error, Error.validation_error(message, %{field: :crossover, value: module})}
-    end
-  end
-
-  @doc false
-  @spec validate_mutation_module(module(), keyword()) :: :ok | {:error, String.t()}
-  def validate_mutation_module(module, _opts) do
-    validate_strategy_module(module, :mutate, 2, "mutation strategy must export mutate/2")
-  end
-
-  @doc false
-  @spec validate_selection_module(module(), keyword()) :: :ok | {:error, String.t()}
-  def validate_selection_module(module, _opts) do
-    validate_strategy_module(module, :select, 4, "selection strategy must export select/4")
-  end
-
-  @doc false
-  @spec validate_crossover_module(module(), keyword()) :: :ok | {:error, String.t()}
-  def validate_crossover_module(module, _opts) do
-    validate_strategy_module(module, :crossover, 3, "crossover strategy must export crossover/3")
-  end
-
-  defp validate_strategy_module(module, function, arity, message) when is_atom(module) do
-    if Code.ensure_loaded?(module) and function_exported?(module, function, arity) do
-      :ok
-    else
-      {:error, message}
-    end
-  end
-
-  defp validate_strategy_module(_module, _function, _arity, message), do: {:error, message}
+  defp emit(_config, _event, _measurements, _metadata), do: :ok
 end

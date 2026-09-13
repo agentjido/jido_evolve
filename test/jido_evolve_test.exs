@@ -3,7 +3,7 @@ defmodule Jido.EvolveTest do
   doctest Jido.Evolve
 
   test "returns package version" do
-    assert Jido.Evolve.version() != nil
+    assert Jido.Evolve.version() =~ ~r/^\d+\.\d+\.\d+/
   end
 
   test "evolve/1 raises for invalid option type" do

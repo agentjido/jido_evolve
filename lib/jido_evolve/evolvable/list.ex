@@ -34,7 +34,7 @@ defimpl Jido.Evolve.Evolvable, for: List do
         Enum.zip(list1, list2)
         |> Enum.count(fn {a, b} -> a != b end)
 
-      differences / length(list1)
+      if list1 == [], do: 0.0, else: differences / length(list1)
     end
   end
 end

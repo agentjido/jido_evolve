@@ -17,15 +17,17 @@ defmodule Jido.Evolve.Mutation.HParams do
   ## Example
 
       schema = %{
-        learning_rate: {:float, 0.001..0.1, :log},
+        learning_rate: {:float, {0.001, 0.1}, :log},
         activation: {:enum, [:relu, :tanh]}
       }
       
       hparams = %{learning_rate: 0.01, activation: :relu}
-      mutate(hparams, config, schema: schema)
+      mutate(hparams, schema: schema, rate: 0.1)
   """
 
   use Jido.Evolve.Mutation
+
+  alias Jido.Evolve.Evolvable.HParams
 
   @opts_schema Zoi.keyword(
                  [
@@ -38,8 +40,8 @@ defmodule Jido.Evolve.Mutation.HParams do
 
   @impl true
   def mutate(hparams, opts) when is_map(hparams) do
-    with {:ok, parsed_opts} <- parse_opts(opts) do
-      schema = Keyword.fetch!(parsed_opts, :schema)
+    with {:ok, parsed_opts} <- parse_opts(opts),
+         {:ok, schema} <- HParams.normalize_schema(Keyword.fetch!(parsed_opts, :schema)) do
       rate = Keyword.fetch!(parsed_opts, :rate)
       gaussian_scale = Keyword.fetch!(parsed_opts, :gaussian_scale)
 
@@ -96,8 +98,11 @@ defmodule Jido.Evolve.Mutation.HParams do
 
       2 when length(list) < max_len ->
         # Insert random element
-        new_elem = random_value(elem_spec)
+        new_elem = HParams.random_value(elem_spec)
         List.insert_at(list, :rand.uniform(length(list) + 1) - 1, new_elem)
+
+      _ when list == [] ->
+        []
 
       _ ->
         # Mutate random element
@@ -116,25 +121,15 @@ defmodule Jido.Evolve.Mutation.HParams do
     |> min(max)
   end
 
-  defp random_value({:float, {min, max}, :linear}) do
-    min + :rand.uniform() * (max - min)
+  @impl true
+  @doc "Validate options and schema before a run starts."
+  @spec validate_opts(keyword()) :: :ok | {:error, term()}
+  def validate_opts(opts) do
+    with {:ok, parsed} <- parse_opts(opts),
+         {:ok, _schema} <- HParams.normalize_schema(Keyword.fetch!(parsed, :schema)) do
+      :ok
+    end
   end
-
-  defp random_value({:float, {min, max}, :log}) do
-    log_min = :math.log(min)
-    log_max = :math.log(max)
-    :math.exp(log_min + :rand.uniform() * (log_max - log_min))
-  end
-
-  defp random_value({:int, {min, max}}) do
-    min + :rand.uniform(max - min + 1) - 1
-  end
-
-  defp random_value({:enum, choices}) when is_list(choices) do
-    Enum.random(choices)
-  end
-
-  defp random_value(_), do: 0
 
   defp parse_opts(opts) when is_map(opts), do: parse_opts(Map.to_list(opts))
 

@@ -3,7 +3,7 @@ defmodule Jido.Evolve.Options do
   Canonical option validation and normalization for `Jido.Evolve.evolve/1`.
   """
 
-  alias Jido.Evolve.{Config, Error}
+  alias Jido.Evolve.{Cancellation, Config, Error}
 
   @population_schema Zoi.list(Zoi.any()) |> Zoi.refine({__MODULE__, :validate_population, []})
   @fitness_schema Zoi.any() |> Zoi.refine({__MODULE__, :validate_fitness, []})
@@ -20,7 +20,11 @@ defmodule Jido.Evolve.Options do
               context: Zoi.map() |> Zoi.default(%{}),
               mutation: @mutation_override_schema,
               selection: @selection_override_schema,
-              crossover: @crossover_override_schema
+              crossover: @crossover_override_schema,
+              mutation_opts: Zoi.any() |> Zoi.default([]),
+              selection_opts: Zoi.any() |> Zoi.default([]),
+              crossover_opts: Zoi.any() |> Zoi.default([]),
+              cancellation: Zoi.any() |> Zoi.nullish()
             },
             coerce: true
           )
@@ -39,13 +43,19 @@ defmodule Jido.Evolve.Options do
   """
   @spec new(keyword() | map()) :: {:ok, t()} | {:error, Exception.t()}
   def new(opts) when is_list(opts) or is_map(opts) do
-    opts_map = normalize_opts(opts)
-
-    with {:ok, parsed} <- parse(opts_map),
-         {:ok, config} <- normalize_config(parsed.config),
+    with :ok <- validate_shape(opts),
+         opts_map = normalize_opts(opts),
+         :ok <- reject_unknown(opts_map),
+         {:ok, parsed} <- parse(opts_map),
+         {:ok, config} <- normalize_config(parsed.config, length(parsed.initial_population)),
          {:ok, mutation} <- resolve_strategy(parsed.mutation || config.mutation_strategy, :mutation),
          {:ok, selection} <- resolve_strategy(parsed.selection || config.selection_strategy, :selection),
-         {:ok, crossover} <- resolve_strategy(parsed.crossover || config.crossover_strategy, :crossover) do
+         {:ok, crossover} <- resolve_strategy(parsed.crossover || config.crossover_strategy, :crossover),
+         :ok <- validate_options(mutation, parsed.mutation_opts),
+         :ok <- validate_options(selection, parsed.selection_opts),
+         :ok <- validate_options(crossover, parsed.crossover_opts),
+         :ok <- validate_cancellation(parsed.cancellation),
+         :ok <- validate_budget(config, length(parsed.initial_population)) do
       {:ok,
        %{
          parsed
@@ -72,6 +82,53 @@ defmodule Jido.Evolve.Options do
 
       {:error, error} ->
         raise error
+    end
+  end
+
+  defp validate_shape(opts) do
+    if is_map(opts) or Keyword.keyword?(opts),
+      do: :ok,
+      else: {:error, Error.validation_error("options must be a keyword list or map")}
+  end
+
+  defp reject_unknown(opts) do
+    unknown = Map.keys(opts) -- Map.keys(Map.from_struct(struct(__MODULE__)))
+    if unknown == [], do: :ok, else: {:error, Error.validation_error("unknown evolve options", %{keys: unknown})}
+  end
+
+  defp validate_options(module, opts) do
+    cond do
+      not is_list(opts) or not Keyword.keyword?(opts) ->
+        {:error, Error.validation_error("strategy options must be a keyword list", %{module: module})}
+
+      function_exported?(module, :validate_opts, 1) ->
+        case module.validate_opts(opts) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            {:error, Error.validation_error("invalid strategy options", %{module: module, reason: reason})}
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_cancellation(nil), do: :ok
+  defp validate_cancellation(%Cancellation{}), do: :ok
+  defp validate_cancellation(_), do: {:error, Error.validation_error("cancellation must be a Cancellation token")}
+
+  defp validate_budget(config, size) do
+    cond do
+      config.population_size != size ->
+        {:error, Error.config_error("population_size must match initial_population")}
+
+      config.max_evaluations != nil and config.max_evaluations < size ->
+        {:error, Error.config_error("max_evaluations must cover the initial population")}
+
+      true ->
+        :ok
     end
   end
 
@@ -113,11 +170,14 @@ defmodule Jido.Evolve.Options do
     end
   end
 
-  defp normalize_config(nil), do: {:ok, Config.new!()}
-  defp normalize_config(%Config{} = config), do: normalize_config(Map.from_struct(config))
+  defp normalize_config(nil, size), do: Config.new(population_size: size)
+  defp normalize_config(%Config{} = config, size), do: normalize_config(Map.from_struct(config), size)
 
-  defp normalize_config(config_opts) when is_list(config_opts) or is_map(config_opts) do
-    case Config.new(config_opts) do
+  defp normalize_config(config_opts, size) when is_list(config_opts) or is_map(config_opts) do
+    opts = if is_list(config_opts) and Keyword.keyword?(config_opts), do: Map.new(config_opts), else: config_opts
+    opts = if is_map(opts), do: Map.put_new(opts, :population_size, size), else: opts
+
+    case Config.new(opts) do
       {:ok, config} ->
         {:ok, config}
 
@@ -126,7 +186,7 @@ defmodule Jido.Evolve.Options do
     end
   end
 
-  defp normalize_config(other) do
+  defp normalize_config(other, _size) do
     {:error, Error.config_error("config must be nil, map, keyword list, or %Jido.Evolve.Config{}", %{value: other})}
   end
 

@@ -4,9 +4,12 @@ These rules define recommended usage for AI-assisted development with this packa
 
 ## Intended Use
 
-- Use `Jido.Evolve.evolve/1` as the canonical public entrypoint.
+- Use `Jido.Evolve.run/1` for final results and `evolve/1` for progress.
 - Prefer explicit fitness modules with deterministic behavior for repeatable runs.
 - Provide a random seed in config for reproducible test scenarios.
+- Register callback-owned external work with `Jido.Evolve.Cleanup.register/1`.
+  A worker's `after` block cannot clean resources after a forced stop. Follow
+  the cleanup contract in `guides/getting-started.md` and use a finite cleanup budget.
 
 ## Safety and Reliability
 
@@ -22,4 +25,4 @@ These rules define recommended usage for AI-assisted development with this packa
 ## Release Rules
 
 - Do not publish unless `mix quality`, `mix coveralls`, and `mix docs` all pass.
-- Update `CHANGELOG.md` for every public release.
+- Do not edit `CHANGELOG.md`; release notes are generated from Git history.

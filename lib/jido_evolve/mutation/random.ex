@@ -11,7 +11,7 @@ defmodule Jido.Evolve.Mutation.Random do
   @opts_schema Zoi.keyword(
                  [
                    rate: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.1),
-                   strength: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(0.5),
+                   strength: Zoi.number() |> Zoi.min(0.0) |> Zoi.max(1.0) |> Zoi.default(1.0),
                    operations:
                      Zoi.list(Zoi.enum([:replace, :insert, :delete]))
                      |> Zoi.min(1)
@@ -31,7 +31,7 @@ defmodule Jido.Evolve.Mutation.Random do
   ## Options
 
   - `:rate` - Mutation rate (0.0 to 1.0), default: 0.1
-  - `:strength` - Mutation strength (0.0 to 1.0), default: 0.5
+  - `:strength` - Multiplier on mutation probability (0.0 to 1.0), default: 1.0
   - `:operations` - List of allowed operations (default: [:replace, :insert, :delete])
 
   ## Examples
@@ -40,6 +40,7 @@ defmodule Jido.Evolve.Mutation.Random do
       iex> is_binary(mutated)
       true
   """
+  @impl true
   def mutate(entity, opts \\ []) do
     with {:ok, parsed_opts} <- parse_opts(opts) do
       rate = Keyword.fetch!(parsed_opts, :rate)
@@ -47,7 +48,7 @@ defmodule Jido.Evolve.Mutation.Random do
       operations = Keyword.fetch!(parsed_opts, :operations)
 
       genome = Evolvable.to_genome(entity)
-      mutated_genome = apply_mutations(genome, rate, strength, operations)
+      mutated_genome = apply_mutations(genome, rate * strength, operations)
       {:ok, Evolvable.from_genome(entity, mutated_genome)}
     end
   rescue
@@ -57,7 +58,7 @@ defmodule Jido.Evolve.Mutation.Random do
 
   # Private functions
 
-  defp apply_mutations(genome, rate, _strength, operations) when is_list(genome) do
+  defp apply_mutations(genome, rate, operations) when is_list(genome) do
     genome
     |> Enum.with_index()
     |> Enum.reduce(genome, fn {_element, index}, acc ->
@@ -104,6 +105,16 @@ defmodule Jido.Evolve.Mutation.Random do
       List.insert_at(genome, position, new_char)
     else
       genome
+    end
+  end
+
+  @impl true
+  @doc "Validate mutation options before a run starts."
+  @spec validate_opts(keyword()) :: :ok | {:error, term()}
+  def validate_opts(opts) do
+    case parse_opts(opts) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

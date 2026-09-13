@@ -17,7 +17,7 @@ defmodule Jido.Evolve.StateTest do
   end
 
   test "update_scores/2 sets best and average scores" do
-    state = State.new(["a", "bb", "ccc"], Config.new!())
+    state = State.new(["a", "bb", "ccc"], Config.new!(diversity_enabled: true))
     updated = State.update_scores(state, %{"a" => 1.0, "bb" => 2.0, "ccc" => 3.0})
 
     assert updated.best_entity == "ccc"
@@ -26,11 +26,11 @@ defmodule Jido.Evolve.StateTest do
   end
 
   test "update_scores/2 handles empty score map" do
-    state = State.new(["a", "b"], Config.new!())
+    state = State.new(["a", "b"], Config.new!(diversity_enabled: true))
     updated = State.update_scores(state, %{})
 
     assert updated.best_entity == nil
-    assert updated.best_score == 0.0
+    assert updated.best_score == nil
     assert updated.average_score == 0.0
   end
 
@@ -38,7 +38,7 @@ defmodule Jido.Evolve.StateTest do
     state =
       State.new!(%{
         population: [1, 2, 3],
-        config: Config.new!(),
+        config: Config.new!(diversity_enabled: true),
         generation: 5,
         scores: %{1 => 0.1},
         best_entity: 1,
@@ -53,7 +53,7 @@ defmodule Jido.Evolve.StateTest do
     assert next_state.generation == 6
     assert next_state.scores == %{}
     assert next_state.best_entity == nil
-    assert next_state.best_score == 0.0
+    assert next_state.best_score == nil
     assert next_state.average_score == 0.0
     assert length(next_state.fitness_history) == 100
     assert hd(next_state.fitness_history) == 0.75
@@ -63,7 +63,7 @@ defmodule Jido.Evolve.StateTest do
     singleton =
       State.new!(%{
         population: ["only"],
-        config: Config.new!()
+        config: Config.new!(diversity_enabled: true)
       })
       |> State.calculate_diversity()
 
@@ -72,7 +72,7 @@ defmodule Jido.Evolve.StateTest do
     small =
       State.new!(%{
         population: ["abc", "abd", "xyz"],
-        config: Config.new!()
+        config: Config.new!(diversity_enabled: true)
       })
       |> State.calculate_diversity()
 
@@ -82,7 +82,7 @@ defmodule Jido.Evolve.StateTest do
     all_same_small =
       State.new!(%{
         population: ["same", "same"],
-        config: Config.new!()
+        config: Config.new!(diversity_enabled: true)
       })
       |> State.calculate_diversity()
 
@@ -91,7 +91,7 @@ defmodule Jido.Evolve.StateTest do
     all_same_large =
       State.new!(%{
         population: Enum.map(1..10, fn _ -> "same" end),
-        config: Config.new!()
+        config: Config.new!(diversity_enabled: true)
       })
       |> State.calculate_diversity()
 
@@ -99,7 +99,7 @@ defmodule Jido.Evolve.StateTest do
   end
 
   test "put_metadata/3 stores metadata entries" do
-    state = State.new(["a"], Config.new!())
+    state = State.new(["a"], Config.new!(diversity_enabled: true))
     updated = State.put_metadata(state, :source, :test)
     assert updated.metadata[:source] == :test
   end
@@ -144,7 +144,8 @@ defmodule Jido.Evolve.StateTest do
       State.new!(%{
         population: ["a"],
         config: config,
-        fitness_history: [0.2, 0.2, 0.2]
+        fitness_history: [0.2, 0.2, 0.2],
+        stagnant_generations: 3
       })
 
     assert State.terminated?(stable_history)

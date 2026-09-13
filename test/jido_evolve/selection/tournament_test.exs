@@ -89,31 +89,9 @@ defmodule Jido.Evolve.Selection.TournamentTest do
       assert Map.get(counts, "c", 0) > Map.get(counts, "a", 0)
     end
 
-    test "pressure increases selection bias toward higher scores" do
-      population = ["low", "mid", "high"]
-      scores = %{"low" => -10.0, "mid" => 0.0, "high" => 10.0}
-
-      # Low pressure - more exploration
-      selected_low_pressure =
-        Tournament.select(population, scores, 1000, tournament_size: 3, pressure: 0.5)
-
-      counts_low = Enum.frequencies(selected_low_pressure)
-
-      # High pressure - more exploitation
-      selected_high_pressure =
-        Tournament.select(population, scores, 1000, tournament_size: 3, pressure: 3.0)
-
-      counts_high = Enum.frequencies(selected_high_pressure)
-
-      # With tournament_size=3, "high" should dominate especially with high pressure
-      # High pressure should give "high" a larger share
-      high_share_low = Map.get(counts_low, "high", 0) / 1000
-      high_share_high = Map.get(counts_high, "high", 0) / 1000
-
-      # Higher pressure should increase the share (allowing for randomness)
-      assert high_share_high >= high_share_low
-      # "high" should be selected most often with high pressure
-      assert Map.get(counts_high, "high", 0) >= Map.get(counts_high, "mid", 0)
+    test "rejects the removed pressure option" do
+      assert {:error, _} = Tournament.validate_opts(pressure: 0.5)
+      assert Tournament.select(["a"], %{"a" => 1}, 1, pressure: 0.5) == []
     end
 
     test "preserves ordering after normalization" do
@@ -128,7 +106,7 @@ defmodule Jido.Evolve.Selection.TournamentTest do
       }
 
       # Run many tournaments with smaller tournament size to get distribution
-      selected = Tournament.select(population, scores, 2000, tournament_size: 3, pressure: 2.0)
+      selected = Tournament.select(population, scores, 2000, tournament_size: 3)
 
       counts = Enum.frequencies(selected)
 
@@ -166,12 +144,12 @@ defmodule Jido.Evolve.Selection.TournamentTest do
       assert Enum.all?(selected, &(&1 in population))
     end
 
-    test "negative scores with fractional pressure" do
+    test "negative scores are ranked without normalization" do
       population = ["a", "b", "c"]
       scores = %{"a" => -9.0, "b" => -4.0, "c" => -1.0}
 
       # This would fail with direct exponentiation of negative numbers
-      selected = Tournament.select(population, scores, 100, tournament_size: 2, pressure: 1.5)
+      selected = Tournament.select(population, scores, 100, tournament_size: 2)
 
       assert length(selected) == 100
       assert Enum.all?(selected, &(&1 in population))
@@ -198,30 +176,6 @@ defmodule Jido.Evolve.Selection.TournamentTest do
 
       # Size 6 should heavily favor "f" (best entity)
       assert Map.get(counts_6, "f", 0) > 400, "Size 6 tournaments should mostly select best"
-    end
-
-    test "respects pressure option from config" do
-      population = ["low", "mid", "high"]
-      scores = %{"low" => 1.0, "mid" => 5.0, "high" => 10.0}
-
-      # Pressure=0.5 - low exploitation, more exploration
-      selected_p05 =
-        Tournament.select(population, scores, 1000, tournament_size: 2, pressure: 0.5)
-
-      counts_p05 = Enum.frequencies(selected_p05)
-
-      # Pressure=3.0 - high exploitation, less exploration
-      selected_p3 = Tournament.select(population, scores, 1000, tournament_size: 2, pressure: 3.0)
-      counts_p3 = Enum.frequencies(selected_p3)
-
-      # Higher pressure should increase "high" selection rate
-      high_rate_p05 = Map.get(counts_p05, "high", 0) / 1000
-      high_rate_p3 = Map.get(counts_p3, "high", 0) / 1000
-
-      # With higher pressure, "high" should be selected more often (allowing some randomness)
-      # At minimum, both should favor "high" over "low"
-      assert high_rate_p3 >= high_rate_p05 * 0.9,
-             "Pressure 3.0 (#{high_rate_p3}) should select 'high' at least as often as pressure 0.5 (#{high_rate_p05})"
     end
   end
 end

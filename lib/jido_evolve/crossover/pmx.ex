@@ -30,7 +30,7 @@ defmodule Jido.Evolve.Crossover.PMX do
   def crossover(parent1, parent2, _config) when is_list(parent1) and is_list(parent2) do
     n = length(parent1)
 
-    if n != length(parent2) or n < 2 do
+    if n != length(parent2) or n < 2 or length(Enum.uniq(parent1)) != n or MapSet.new(parent1) != MapSet.new(parent2) do
       # Return parents unchanged if invalid
       {parent1, parent2}
     else

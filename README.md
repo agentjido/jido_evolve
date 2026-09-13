@@ -3,122 +3,83 @@
 [![Hex.pm](https://img.shields.io/hexpm/v/jido_evolve.svg)](https://hex.pm/packages/jido_evolve)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_evolve/)
 [![CI](https://github.com/agentjido/jido_evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_evolve/actions/workflows/ci.yml)
-[![License](https://img.shields.io/hexpm/l/jido_evolve.svg)](https://github.com/agentjido/jido_evolve/blob/main/LICENSE)
-[![Website](https://img.shields.io/badge/website-jido.run-0f172a.svg)](https://jido.run)
-[![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
-[![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
 
-Evolutionary algorithms for Elixir.
+Evolutionary search over Elixir data. Applications supply candidates, fitness, and
+variation rules. The package provides one generational genetic algorithm with
+bounded evaluation, tournament selection, elitism, and explicit results.
 
-`Jido.Evolve.evolve/1` is the canonical public API for running stream-based evolutionary search with pluggable fitness, mutation, selection, and crossover strategies.
+No language model, Jido agent, Python runtime, or numerical backend is required.
+This checkout includes changes for the next release. See the
+[migration notes](guides/migration.md) before replacing an existing version.
 
 ## Install
 
-```elixir
-def deps do
-  [
-    {:jido_evolve, "~> 0.2.0"}
-  ]
-end
-```
-
-## Installation via Igniter
-
-```bash
-mix igniter.install jido_evolve
-```
-
-## Quick Start
+Use this checkout while testing the next release:
 
 ```elixir
-defmodule MyFitness do
+{:jido_evolve, path: "../jido_evolve"}
+```
+
+## Quick start
+
+```elixir
+defmodule BitCount do
   use Jido.Evolve.Fitness
 
-  def evaluate(entity, _ctx), do: {:ok, String.length(entity)}
+  @impl true
+  def evaluate(bits, _context), do: {:ok, Enum.sum(bits)}
 end
 
-stream =
-  Jido.Evolve.evolve(
-    initial_population: ["random", "strings", "here"],
-    fitness: MyFitness
-  )
-
-final_state = Enum.reduce(stream, fn state, _acc -> state end)
-IO.puts("Best: #{final_state.best_entity} (#{final_state.best_score})")
-```
-
-## API
-
-### `Jido.Evolve.evolve/1`
-
-Required options:
-
-- `:initial_population` - non-empty list of entities
-- `:fitness` - module implementing `evaluate/2`
-
-Optional options:
-
-- `:config` - `%Jido.Evolve.Config{}` or config map/keyword
-- `:context` - map passed to fitness evaluation
-- `:mutation` - mutation module override
-- `:selection` - selection module override
-- `:crossover` - crossover module override
-
-Returns a lazy `Stream` of `Jido.Evolve.State` values (one per generation).
-
-## Configure
-
-```elixir
-config =
-  Jido.Evolve.Config.new!(
-    population_size: 100,
-    generations: 500,
-    mutation_rate: 0.1,
-    crossover_rate: 0.7,
-    elitism_rate: 0.05,
-    selection_strategy: Jido.Evolve.Selection.Tournament,
-    mutation_strategy: Jido.Evolve.Mutation.Text,
-    crossover_strategy: Jido.Evolve.Crossover.String,
-    random_seed: 1234,
-    max_concurrency: System.schedulers_online()
-  )
-```
-
-Pass config into `evolve/1`:
-
-```elixir
-Jido.Evolve.evolve(
-  initial_population: ["a", "bb", "ccc"],
-  fitness: MyFitness,
-  config: config
+{:ok, result} = Jido.Evolve.run(
+  initial_population: [[0, 0, 1], [1, 0, 0], [0, 1, 1]],
+  fitness: BitCount,
+  mutation: Jido.Evolve.Mutation.Binary,
+  crossover: Jido.Evolve.Crossover.Uniform,
+  config: [generations: 20, max_evaluations: 63, random_seed: 42]
 )
+
+IO.inspect({result.best_entity, result.best_score, result.stop_reason})
 ```
 
-## Extension Points
+`run/1` returns `{:ok, %Jido.Evolve.Result{}}` or `{:error, error}`.
+`evolve/1` accepts the same options and returns a lazy stream of generation states.
+Generation 0 is the evaluated initial population. `generations: 20` allows up to
+20 breeding transitions and 21 complete states.
 
-- `Jido.Evolve.Fitness` - score entities
-- `Jido.Evolve.Mutation` - mutate entities
-- `Jido.Evolve.Selection` - select parents
-- `Jido.Evolve.Crossover` - combine parents
-- `Jido.Evolve.Evolvable` - representation and similarity protocol
+## Supported data
 
-## Quality
+| Data | Mutation | Crossover |
+| --- | --- | --- |
+| Strings | `Mutation.Text` | `Crossover.String` |
+| Binary lists | `Mutation.Binary` | `Crossover.Uniform` |
+| Permutations | `Mutation.Permutation` | `Crossover.PMX` |
+| Parameter maps | `Mutation.HParams` with `mutation_opts: [schema: schema]` | `Crossover.MapUniform` |
+| Application data | Application callback | Application callback |
+
+All names above are under `Jido.Evolve`. Diversity measurement is optional and off
+by default. Custom data needs no protocol implementation unless that measurement
+or a chosen operator uses the `Evolvable` protocol.
+
+## Scope
+
+The core owns search, operators, evaluation records, budgets, and results.
+Applications own domain validity, fixed evaluation cases, acceptance, and promotion.
+Multi-objective search, native GEPA, model calls, persistent resume, and distributed
+execution are deferred.
+
+An [example GEPA search](guides/gepa-examples.md) now shows a separate reflective
+search schedule over the core evaluator. Run it without API keys, then connect
+task and reflection models through the optional ReqLLM example.
+
+## Guides and checks
+
+- [Getting started and callback contracts](guides/getting-started.md)
+- [Migration from the previous API](guides/migration.md)
+- [GEPA examples: offline search and real model callbacks](guides/gepa-examples.md)
+- [Contributing](CONTRIBUTING.md)
 
 ```bash
 mix quality
-mix test
+mix test --cover
 mix docs
 ```
-
-## v0.2.0 Migration Notes (Breaking)
-
-- `Jido.Evolve.evolve/1` no longer accepts `:evolvable`.
-- Public strategy override keys are now `:mutation`, `:selection`, and `:crossover`.
-- Config/state internals are validated via Zoi.
-- Error handling is centralized under `Jido.Evolve.Error`.
-
-## Docs and Guides
-
-- [Getting Started](guides/getting-started.md)
-- [CHANGELOG](CHANGELOG.md)
-- [CONTRIBUTING](CONTRIBUTING.md)

@@ -65,6 +65,16 @@ defmodule Jido.Evolve.Mutation.Permutation do
     {:error, "Permutation mutation requires list genome"}
   end
 
+  @impl true
+  @doc "Validate mutation options before a run starts."
+  @spec validate_opts(keyword()) :: :ok | {:error, term()}
+  def validate_opts(opts) do
+    case parse_opts(opts) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp parse_opts(opts) when is_map(opts), do: parse_opts(Map.to_list(opts))
 
   defp parse_opts(opts) when is_list(opts) do

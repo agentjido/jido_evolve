@@ -112,6 +112,7 @@ defmodule Jido.Evolve.MixProject do
         "lib",
         "config",
         "guides",
+        "examples",
         "mix.exs",
         ".doctor.exs",
         "README.md",
@@ -140,7 +141,9 @@ defmodule Jido.Evolve.MixProject do
         "README.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
-        "guides/getting-started.md"
+        "guides/getting-started.md",
+        "guides/migration.md",
+        "guides/gepa-examples.md"
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/

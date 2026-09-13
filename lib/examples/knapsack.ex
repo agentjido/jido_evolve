@@ -150,9 +150,6 @@ defmodule Jido.Evolve.Examples.Knapsack do
 
         state
       end)
-      |> Stream.take_while(fn state ->
-        state.best_score < optimal and state.generation < generations
-      end)
       |> Enum.to_list()
       |> List.last()
 

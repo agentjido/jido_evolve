@@ -106,7 +106,7 @@ defmodule Jido.Evolve.EvaluationTimeoutTest do
         )
 
       initial_pop = ["a", "bb", "ccc"]
-      state = State.new(initial_pop, config)
+      state = State.new(initial_pop, config) |> State.update_scores(%{"a" => 1, "bb" => 2, "ccc" => 3})
 
       # Manually test the evaluation with a very short timeout
       result =
