@@ -78,3 +78,7 @@ mix quality
 mix test --cover
 mix docs
 ```
+
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
