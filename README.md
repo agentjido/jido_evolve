@@ -71,6 +71,7 @@ execution are deferred.
 
 - [Getting started and callback contracts](guides/getting-started.md)
 - [Migration from the previous API](guides/migration.md)
+- [Use with consolidated Jido v3](guides/jido-v3.md)
 - [Contributing](CONTRIBUTING.md)
 
 ```bash

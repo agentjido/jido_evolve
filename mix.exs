@@ -89,7 +89,8 @@ defmodule Jido.Evolve.MixProject do
 
   defp aliases do
     [
-      setup: ["deps.get", "git_hooks.install"],
+      setup: ["deps.get"],
+      install_hooks: ["git_hooks.install"],
       test: "test --exclude flaky",
       quality: [
         "format --check-formatted",
@@ -125,8 +126,8 @@ defmodule Jido.Evolve.MixProject do
       links: %{
         "Documentation" => "https://hexdocs.pm/jido_evolve",
         "GitHub" => @source_url,
-        "Website" => "https://agentjido.xyz",
-        "Discord" => "https://agentjido.xyz/discord",
+        "Website" => "https://jido.run",
+        "Discord" => "https://jido.run/discord",
         "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
       }
     ]
@@ -141,7 +142,8 @@ defmodule Jido.Evolve.MixProject do
         "CHANGELOG.md",
         "CONTRIBUTING.md",
         "guides/getting-started.md",
-        "guides/migration.md"
+        "guides/migration.md",
+        "guides/jido-v3.md"
       ],
       groups_for_extras: [
         Guides: ~r/guides\/.*/

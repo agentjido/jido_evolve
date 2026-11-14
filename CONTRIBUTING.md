@@ -45,4 +45,10 @@ git commit -m "fix(engine): normalize mutation override wiring"
 
 - Keep changes focused and reviewable.
 - Include tests for behavior changes.
-- Update README and CHANGELOG when public behavior changes.
+- Update the README and guides when public behavior changes. Release notes are
+  generated from Git history; do not edit `CHANGELOG.md`.
+
+## Git hooks
+
+`mix setup` gets dependencies. It does not install Git hooks. Run
+`mix install_hooks` only when you choose to install hooks for this checkout.

@@ -41,12 +41,17 @@ include breaking behavior. Select the release version before publishing.
   positive, finite `cleanup_timeout` budget (default: 1,000 milliseconds).
   Cleanup failures invalidate the evaluation and retain its original outcome.
 
-The adjacent HTN consumer can test this checkout with:
+From the workspace `jido_htn/jido_htn` folder, temporarily set the
+`jido_evolve` dependency to `path: "../../jido_intelligence/jido_evolve"` and test
+the local checkout:
 
 ```bash
-JIDO_EVOLVE_PATH=../jido_evolve mix deps.get
-JIDO_EVOLVE_PATH=../jido_evolve mix test test/jido_htn/learning/evolver_test.exs
+mix deps.get
+mix test test/jido_htn/learning/evolver_test.exs
 ```
+
+Restore the released or pinned dependency before delivery. The consumer does
+not read a `JIDO_EVOLVE_PATH` environment variable.
 
 HTN freezes evaluation cases before search and uses them again for acceptance.
 Its trace includes generation 0. Its promotion policy remains application-owned.
