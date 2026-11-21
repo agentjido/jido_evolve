@@ -1,5 +1,10 @@
 # Jido.Evolve
 
+> [!IMPORTANT]
+> **This standalone package is planned for deprecation.** [Tune](https://github.com/agentjido/tune) is the successor for new search and optimization work.
+>
+> Check that Tune covers your workflow before changing dependencies.
+
 [![Hex.pm](https://img.shields.io/hexpm/v/jido_evolve.svg)](https://hex.pm/packages/jido_evolve)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_evolve/)
 [![CI](https://github.com/agentjido/jido_evolve/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_evolve/actions/workflows/ci.yml)
