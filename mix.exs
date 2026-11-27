@@ -68,7 +68,7 @@ defmodule Jido.Evolve.MixProject do
     [
       # Runtime dependencies
       {:jason, "~> 1.4"},
-      {:zoi, "~> 0.19.0"},
+      {:zoi, "~> 0.20.0"},
       {:splode, "~> 0.3.0"},
       {:telemetry, "~> 1.3"},
 
